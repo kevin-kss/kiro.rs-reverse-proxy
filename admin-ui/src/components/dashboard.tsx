@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useMemo } from 'react'
-import { RefreshCw, LogOut, Moon, Sun, Server, Plus, Upload, Trash2, RotateCcw, CheckCircle2, Globe, ArrowUp, ArrowDown } from 'lucide-react'
+import { RefreshCw, LogOut, Moon, Sun, Server, Plus, Upload, Trash2, RotateCcw, CheckCircle2, Globe, ArrowUp, ArrowDown, LayoutGrid, List } from 'lucide-react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { storage } from '@/lib/storage'
@@ -20,6 +20,7 @@ import type { BalanceResponse } from '@/types/api'
 
 type SortField = 'default' | 'id' | 'balance'
 type SortOrder = 'asc' | 'desc'
+type ViewMode = 'grid' | 'list'
 
 interface DashboardProps {
   onLogout: () => void
@@ -46,7 +47,13 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const [currentPage, setCurrentPage] = useState(1)
   const [sortField, setSortField] = useState<SortField>('default')
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc')
-  const itemsPerPage = 12
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    if (typeof window !== 'undefined') {
+      return (localStorage.getItem('kiro-admin-view-mode') as ViewMode) || 'grid'
+    }
+    return 'grid'
+  })
+  const itemsPerPage = viewMode === 'grid' ? 12 : 20
   const [darkMode, setDarkMode] = useState(() => {
     if (typeof window !== 'undefined') {
       return document.documentElement.classList.contains('dark')
@@ -618,6 +625,25 @@ export function Dashboard({ onLogout }: DashboardProps) {
                   )
                 })}
               </div>
+              {/* 视图切换 */}
+              <div className="flex items-center border rounded-md">
+                <Button
+                  size="sm"
+                  variant={viewMode === 'grid' ? 'secondary' : 'ghost'}
+                  className="h-7 px-2 rounded-r-none"
+                  onClick={() => { setViewMode('grid'); localStorage.setItem('kiro-admin-view-mode', 'grid'); setCurrentPage(1) }}
+                >
+                  <LayoutGrid className="h-4 w-4" />
+                </Button>
+                <Button
+                  size="sm"
+                  variant={viewMode === 'list' ? 'secondary' : 'ghost'}
+                  className="h-7 px-2 rounded-l-none"
+                  onClick={() => { setViewMode('list'); localStorage.setItem('kiro-admin-view-mode', 'list'); setCurrentPage(1) }}
+                >
+                  <List className="h-4 w-4" />
+                </Button>
+              </div>
               {selectedIds.size > 0 && (
                 <div className="flex items-center gap-2">
                   <Badge variant="secondary">已选择 {selectedIds.size} 个</Badge>
@@ -698,20 +724,100 @@ export function Dashboard({ onLogout }: DashboardProps) {
             </Card>
           ) : (
             <>
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {currentCredentials.map((credential) => (
-                  <CredentialCard
-                    key={credential.id}
-                    credential={credential}
-                    cachedBalance={cachedBalanceMap.get(credential.id)}
-                    onViewBalance={handleViewBalance}
-                    selected={selectedIds.has(credential.id)}
-                    onToggleSelect={() => toggleSelect(credential.id)}
-                    balance={balanceMap.get(credential.id) || null}
-                    loadingBalance={loadingBalanceIds.has(credential.id)}
-                  />
-                ))}
-              </div>
+              {viewMode === 'grid' ? (
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  {currentCredentials.map((credential) => (
+                    <CredentialCard
+                      key={credential.id}
+                      credential={credential}
+                      cachedBalance={cachedBalanceMap.get(credential.id)}
+                      onViewBalance={handleViewBalance}
+                      selected={selectedIds.has(credential.id)}
+                      onToggleSelect={() => toggleSelect(credential.id)}
+                      balance={balanceMap.get(credential.id) || null}
+                      loadingBalance={loadingBalanceIds.has(credential.id)}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="border rounded-lg overflow-hidden">
+                  <table className="w-full">
+                    <thead className="bg-muted/50">
+                      <tr className="text-left text-sm">
+                        <th className="p-3 w-10">
+                          <input
+                            type="checkbox"
+                            className="rounded"
+                            checked={currentCredentials.length > 0 && currentCredentials.every(c => selectedIds.has(c.id))}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedIds(new Set([...selectedIds, ...currentCredentials.map(c => c.id)]))
+                              } else {
+                                const newSet = new Set(selectedIds)
+                                currentCredentials.forEach(c => newSet.delete(c.id))
+                                setSelectedIds(newSet)
+                              }
+                            }}
+                          />
+                        </th>
+                        <th className="p-3">ID</th>
+                        <th className="p-3">状态</th>
+                        <th className="p-3">使用次数</th>
+                        <th className="p-3">失败次数</th>
+                        <th className="p-3">余额</th>
+                        <th className="p-3">Region</th>
+                        <th className="p-3 text-right">操作</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {currentCredentials.map((credential) => {
+                        const cached = cachedBalanceMap.get(credential.id)
+                        return (
+                          <tr key={credential.id} className={`hover:bg-muted/30 ${credential.disabled ? 'opacity-50' : ''}`}>
+                            <td className="p-3">
+                              <input
+                                type="checkbox"
+                                className="rounded"
+                                checked={selectedIds.has(credential.id)}
+                                onChange={() => toggleSelect(credential.id)}
+                              />
+                            </td>
+                            <td className="p-3 font-mono text-sm">#{credential.id}</td>
+                            <td className="p-3">
+                              <Badge variant={credential.disabled ? 'destructive' : 'default'}>
+                                {credential.disabled ? '已禁用' : '启用'}
+                              </Badge>
+                            </td>
+                            <td className="p-3 text-sm">{credential.callsTotal ?? '-'}</td>
+                            <td className="p-3 text-sm">
+                              {credential.failureCount > 0 ? (
+                                <span className="text-red-500">{credential.failureCount}</span>
+                              ) : (
+                                <span className="text-muted-foreground">0</span>
+                              )}
+                            </td>
+                            <td className="p-3 text-sm font-medium">
+                              {cached?.remaining != null ? `$${cached.remaining.toFixed(2)}` : '-'}
+                            </td>
+                            <td className="p-3 text-sm text-muted-foreground">
+                              {credential.apiRegion || '-'}
+                            </td>
+                            <td className="p-3 text-right">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                onClick={() => handleViewBalance(credential.id, false)}
+                              >
+                                查看余额
+                              </Button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
 
               {/* 分页控件 */}
               {totalPages > 1 && (
