@@ -1423,6 +1423,20 @@ impl MultiTokenManager {
         );
     }
 
+    /// 更新凭据邮箱
+    pub fn update_credential_email(&self, id: u64, email: Option<String>) {
+        if email.is_none() {
+            return;
+        }
+        let mut entries = self.entries.lock();
+        if let Some(entry) = entries.iter_mut().find(|e| e.id == id) {
+            if entry.credentials.email != email {
+                entry.credentials.email = email;
+                tracing::debug!("凭据 #{} 邮箱已更新", id);
+            }
+        }
+    }
+
     /// 检查是否需要刷新余额缓存
     pub fn should_refresh_balance(&self, id: u64) -> bool {
         let cache = self.balance_cache.lock();
@@ -2061,13 +2075,24 @@ impl MultiTokenManager {
             return 0;
         }
 
-        tracing::info!("正在初始化 {} 个凭据的余额...", credential_ids.len());
+        tracing::info!("正在初始化 {} 个凭据的余额（并发模式）...", credential_ids.len());
+
+        // 并发查询所有凭据的余额（最多 5 个并发）
+        use futures::stream::{self, StreamExt};
+        
+        let results: Vec<(u64, Result<UsageLimitsResponse, anyhow::Error>)> = stream::iter(credential_ids.clone())
+            .map(|id| async move {
+                let result = self.get_usage_limits_for(id).await;
+                (id, result)
+            })
+            .buffer_unordered(5) // 最多 5 个并发请求
+            .collect()
+            .await;
 
         let mut success_count = 0;
 
-        // 顺序查询每个凭据的余额，间隔 0.5 秒避免触发限流
-        for (index, &id) in credential_ids.iter().enumerate() {
-            match self.get_usage_limits_for(id).await {
+        for (id, result) in results {
+            match result {
                 Ok(limits) => {
                     // 计算剩余额度
                     let used = limits.current_usage();
@@ -2075,6 +2100,9 @@ impl MultiTokenManager {
                     let remaining = (limit - used).max(0.0);
 
                     self.update_balance_cache(id, remaining);
+
+                    // 更新凭据邮箱
+                    self.update_credential_email(id, limits.email().map(|s| s.to_string()));
 
                     // 余额小于 1 时自动禁用凭据
                     if remaining < 1.0 {
@@ -2092,11 +2120,6 @@ impl MultiTokenManager {
                 Err(e) => {
                     tracing::warn!("凭据 #{} 余额查询失败: {}", id, e);
                 }
-            }
-
-            // 非最后一个凭据时，间隔 0.5 秒
-            if index < credential_ids.len() - 1 {
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             }
         }
 

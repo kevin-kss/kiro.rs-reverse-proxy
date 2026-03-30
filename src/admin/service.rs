@@ -198,6 +198,9 @@ impl AdminService {
         // 更新缓存，使列表页面能显示最新余额
         self.token_manager.update_balance_cache(id, remaining);
 
+        // 更新凭据邮箱
+        self.token_manager.update_credential_email(id, usage.email().map(|s| s.to_string()));
+
         Ok(BalanceResponse {
             id,
             subscription_title: usage.subscription_title().map(|s| s.to_string()),

@@ -12,7 +12,7 @@ import { ImportTokenJsonDialog } from '@/components/import-token-json-dialog'
 import { BatchVerifyDialog, type VerifyResult } from '@/components/batch-verify-dialog'
 import { ProxyConfigDialog } from '@/components/proxy-config-dialog'
 import { GlobalConfigDialog } from '@/components/global-config-dialog'
-import { useCredentials, useCachedBalances, useDeleteCredential, useResetFailure, useProxyConfig, useGlobalConfig } from '@/hooks/use-credentials'
+import { useCredentials, useCachedBalances, useDeleteCredential, useResetFailure, useSetDisabled, useProxyConfig, useGlobalConfig } from '@/hooks/use-credentials'
 import { getCredentialBalance } from '@/api/credentials'
 import { extractErrorMessage } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
@@ -41,10 +41,15 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const [verifyResults, setVerifyResults] = useState<Map<number, VerifyResult>>(new Map())
   const [balanceMap, setBalanceMap] = useState<Map<number, BalanceResponse>>(new Map())
   const [loadingBalanceIds, setLoadingBalanceIds] = useState<Set<number>>(new Set())
-  const [queryingInfo, setQueryingInfo] = useState(false)
-  const [queryInfoProgress, setQueryInfoProgress] = useState({ current: 0, total: 0 })
   const cancelVerifyRef = useRef(false)
   const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const saved = localStorage.getItem('kiro-admin-page-size')
+      return saved ? parseInt(saved, 10) : 20
+    }
+    return 20
+  })
   const [sortField, setSortField] = useState<SortField>('default')
   const [sortOrder, setSortOrder] = useState<SortOrder>('asc')
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
@@ -53,7 +58,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
     }
     return 'grid'
   })
-  const itemsPerPage = viewMode === 'grid' ? 12 : 20
+  const itemsPerPage = pageSize
   const [darkMode, setDarkMode] = useState(() => {
     if (typeof window !== 'undefined') {
       return document.documentElement.classList.contains('dark')
@@ -66,6 +71,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const { data: cachedBalancesData } = useCachedBalances()
   const { mutate: deleteCredential } = useDeleteCredential()
   const { mutate: resetFailure } = useResetFailure()
+  const { mutateAsync: setDisabled } = useSetDisabled()
   const { data: proxyConfig } = useProxyConfig()
   const { data: globalConfig } = useGlobalConfig()
 
@@ -300,6 +306,86 @@ export function Dashboard({ onLogout }: DashboardProps) {
     deselectAll()
   }
 
+  // 批量禁用
+  const handleBatchDisable = async () => {
+    if (selectedIds.size === 0) {
+      toast.error('请先选择要禁用的凭据')
+      return
+    }
+
+    const enabledIds = Array.from(selectedIds).filter(id => {
+      const credential = data?.credentials.find(c => c.id === id)
+      return credential && !credential.disabled
+    })
+
+    if (enabledIds.length === 0) {
+      toast.error('选中的凭据都已禁用')
+      return
+    }
+
+    if (!confirm(`确定要禁用 ${enabledIds.length} 个凭据吗？`)) {
+      return
+    }
+
+    let successCount = 0
+    let failCount = 0
+
+    for (const id of enabledIds) {
+      try {
+        await setDisabled({ id, disabled: true })
+        successCount++
+      } catch {
+        failCount++
+      }
+    }
+
+    if (failCount === 0) {
+      toast.success(`成功禁用 ${successCount} 个凭据`)
+    } else {
+      toast.warning(`禁用：成功 ${successCount} 个，失败 ${failCount} 个`)
+    }
+
+    deselectAll()
+  }
+
+  // 批量启用
+  const handleBatchEnable = async () => {
+    if (selectedIds.size === 0) {
+      toast.error('请先选择要启用的凭据')
+      return
+    }
+
+    const disabledIds = Array.from(selectedIds).filter(id => {
+      const credential = data?.credentials.find(c => c.id === id)
+      return credential && credential.disabled
+    })
+
+    if (disabledIds.length === 0) {
+      toast.error('选中的凭据都已启用')
+      return
+    }
+
+    let successCount = 0
+    let failCount = 0
+
+    for (const id of disabledIds) {
+      try {
+        await setDisabled({ id, disabled: false })
+        successCount++
+      } catch {
+        failCount++
+      }
+    }
+
+    if (failCount === 0) {
+      toast.success(`成功启用 ${successCount} 个凭据`)
+    } else {
+      toast.warning(`启用：成功 ${successCount} 个，失败 ${failCount} 个`)
+    }
+
+    deselectAll()
+  }
+
   // 一键清除所有已禁用凭据
   const handleClearAll = async () => {
     if (!data?.credentials || data.credentials.length === 0) {
@@ -349,79 +435,26 @@ export function Dashboard({ onLogout }: DashboardProps) {
     deselectAll()
   }
 
-  // 查询当前页凭据信息（逐个查询，避免瞬时并发）
-  const handleQueryCurrentPageInfo = async () => {
-    if (currentCredentials.length === 0) {
-      toast.error('当前页没有可查询的凭据')
-      return
+  // 批量验活（支持选中凭据或当前页所有启用凭据）
+  const handleBatchVerify = async () => {
+    // 如果有选中凭据，验活选中的；否则验活当前页所有启用凭据
+    let ids: number[]
+    if (selectedIds.size > 0) {
+      ids = Array.from(selectedIds)
+    } else {
+      ids = currentCredentials
+        .filter(c => !c.disabled)
+        .map(c => c.id)
     }
-
-    const ids = currentCredentials
-      .filter(credential => !credential.disabled)
-      .map(credential => credential.id)
 
     if (ids.length === 0) {
-      toast.error('当前页没有可查询的启用凭据')
-      return
-    }
-
-    setQueryingInfo(true)
-    setQueryInfoProgress({ current: 0, total: ids.length })
-
-    let successCount = 0
-    let failCount = 0
-
-    for (let i = 0; i < ids.length; i++) {
-      const id = ids[i]
-
-      setLoadingBalanceIds(prev => {
-        const next = new Set(prev)
-        next.add(id)
-        return next
-      })
-
-      try {
-        const balance = await getCredentialBalance(id)
-        successCount++
-
-        setBalanceMap(prev => {
-          const next = new Map(prev)
-          next.set(id, balance)
-          return next
-        })
-      } catch (error) {
-        failCount++
-      } finally {
-        setLoadingBalanceIds(prev => {
-          const next = new Set(prev)
-          next.delete(id)
-          return next
-        })
-      }
-
-      setQueryInfoProgress({ current: i + 1, total: ids.length })
-    }
-
-    setQueryingInfo(false)
-
-    if (failCount === 0) {
-      toast.success(`查询完成：成功 ${successCount}/${ids.length}`)
-    } else {
-      toast.warning(`查询完成：成功 ${successCount} 个，失败 ${failCount} 个`)
-    }
-  }
-
-  // 批量验活
-  const handleBatchVerify = async () => {
-    if (selectedIds.size === 0) {
-      toast.error('请先选择要验活的凭据')
+      toast.error('没有可验活的凭据')
       return
     }
 
     // 初始化状态
     setVerifying(true)
     cancelVerifyRef.current = false
-    const ids = Array.from(selectedIds)
     setVerifyProgress({ current: 0, total: ids.length })
 
     let successCount = 0
@@ -488,6 +521,9 @@ export function Dashboard({ onLogout }: DashboardProps) {
     }
 
     setVerifying(false)
+
+    // 刷新凭据列表以获取更新后的邮箱等信息
+    refetch()
 
     if (!cancelVerifyRef.current) {
       toast.success(`验活完成：成功 ${successCount}/${ids.length}`)
@@ -676,13 +712,15 @@ export function Dashboard({ onLogout }: DashboardProps) {
             <div className="flex gap-2">
               {selectedIds.size > 0 && (
                 <>
-                  <Button onClick={handleBatchVerify} size="sm" variant="outline">
-                    <CheckCircle2 className="h-4 w-4 mr-2" />
-                    批量验活
-                  </Button>
                   <Button onClick={handleBatchResetFailure} size="sm" variant="outline">
                     <RotateCcw className="h-4 w-4 mr-2" />
                     恢复异常
+                  </Button>
+                  <Button onClick={handleBatchDisable} size="sm" variant="outline">
+                    批量禁用
+                  </Button>
+                  <Button onClick={handleBatchEnable} size="sm" variant="outline">
+                    批量启用
                   </Button>
                   <Button
                     onClick={handleBatchDelete}
@@ -702,15 +740,14 @@ export function Dashboard({ onLogout }: DashboardProps) {
                   验活中... {verifyProgress.current}/{verifyProgress.total}
                 </Button>
               )}
-              {data?.credentials && data.credentials.length > 0 && (
+              {!verifying && data?.credentials && data.credentials.length > 0 && (
                 <Button
-                  onClick={handleQueryCurrentPageInfo}
+                  onClick={handleBatchVerify}
                   size="sm"
                   variant="outline"
-                  disabled={queryingInfo}
                 >
-                  <RefreshCw className={`h-4 w-4 mr-2 ${queryingInfo ? 'animate-spin' : ''}`} />
-                  {queryingInfo ? `查询中... ${queryInfoProgress.current}/${queryInfoProgress.total}` : '查询信息'}
+                  <CheckCircle2 className="h-4 w-4 mr-2" />
+                  {selectedIds.size > 0 ? `验活选中(${selectedIds.size})` : '验活本页'}
                 </Button>
               )}
               {data?.credentials && data.credentials.length > 0 && (
@@ -844,27 +881,50 @@ export function Dashboard({ onLogout }: DashboardProps) {
               )}
 
               {/* 分页控件 */}
-              {totalPages > 1 && (
+              {data?.credentials && data.credentials.length > 0 && (
                 <div className="flex justify-center items-center gap-4 mt-6">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                    disabled={currentPage === 1}
-                  >
-                    上一页
-                  </Button>
-                  <span className="text-sm text-muted-foreground">
-                    第 {currentPage} / {totalPages} 页（共 {data?.credentials.length} 个凭据）
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                    disabled={currentPage === totalPages}
-                  >
-                    下一页
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">每页</span>
+                    <select
+                      value={pageSize}
+                      onChange={(e) => {
+                        const newSize = parseInt(e.target.value, 10)
+                        setPageSize(newSize)
+                        localStorage.setItem('kiro-admin-page-size', String(newSize))
+                        setCurrentPage(1)
+                      }}
+                      className="h-8 px-2 text-sm border rounded-md bg-background"
+                    >
+                      <option value={10}>10</option>
+                      <option value={20}>20</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                    </select>
+                    <span className="text-sm text-muted-foreground">个</span>
+                  </div>
+                  {totalPages > 1 && (
+                    <>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                        disabled={currentPage === 1}
+                      >
+                        上一页
+                      </Button>
+                      <span className="text-sm text-muted-foreground">
+                        第 {currentPage} / {totalPages} 页（共 {data?.credentials.length} 个凭据）
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                        disabled={currentPage === totalPages}
+                      >
+                        下一页
+                      </Button>
+                    </>
+                  )}
                 </div>
               )}
             </>
