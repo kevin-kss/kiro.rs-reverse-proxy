@@ -64,8 +64,7 @@ pub fn build_client(
         }
 
         // 排除本地地址，避免发送到 Go TLS 代理的请求也走外部代理
-        let no_proxy = reqwest::NoProxy::from_string("localhost,127.0.0.1,::1");
-        builder = builder.proxy(proxy).no_proxy(no_proxy);
+        builder = builder.proxy(proxy).no_proxy();
         tracing::debug!("HTTP Client 使用代理: {}", proxy_config.url);
     }
 
