@@ -644,6 +644,26 @@ export function Dashboard({ onLogout }: DashboardProps) {
                   <List className="h-4 w-4" />
                 </Button>
               </div>
+              {/* 全选本页 */}
+              {currentCredentials.length > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 text-xs"
+                  onClick={() => {
+                    const allSelected = currentCredentials.every(c => selectedIds.has(c.id))
+                    if (allSelected) {
+                      const newSet = new Set(selectedIds)
+                      currentCredentials.forEach(c => newSet.delete(c.id))
+                      setSelectedIds(newSet)
+                    } else {
+                      setSelectedIds(new Set([...selectedIds, ...currentCredentials.map(c => c.id)]))
+                    }
+                  }}
+                >
+                  {currentCredentials.every(c => selectedIds.has(c.id)) ? '取消本页' : '全选本页'}
+                </Button>
+              )}
               {selectedIds.size > 0 && (
                 <div className="flex items-center gap-2">
                   <Badge variant="secondary">已选择 {selectedIds.size} 个</Badge>
