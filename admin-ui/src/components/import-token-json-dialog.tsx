@@ -12,7 +12,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { useImportTokenJson, useDeleteCredential } from '@/hooks/use-credentials'
-import { getCredentialBalance, setCredentialDisabled } from '@/api/credentials'
+import { getCredentialBalance, setCredentialDisabled, getCredentialAccountInfo } from '@/api/credentials'
 import { extractErrorMessage } from '@/lib/utils'
 import type { TokenJsonItem, ImportItemResult, ImportSummary } from '@/types/api'
 
@@ -29,6 +29,7 @@ interface VerifyItemResult {
   credentialId?: number
   status: 'pending' | 'verifying' | 'verified' | 'failed' | 'skipped' | 'rolled_back' | 'rollback_failed'
   usage?: string
+  email?: string
   error?: string
   rollbackError?: string
 }
@@ -239,9 +240,17 @@ export function ImportTokenJsonDialog({ open, onOpenChange }: ImportTokenJsonDia
       try {
         await new Promise(resolve => setTimeout(resolve, 1000))
         const balance = await getCredentialBalance(credId)
+        // 尝试获取邮箱
+        let email: string | undefined
+        try {
+          const accountInfo = await getCredentialAccountInfo(credId)
+          email = accountInfo.account?.email || undefined
+        } catch {
+          // 获取邮箱失败不影响验活结果
+        }
         successCount++
         setVerifyResults(prev => prev.map((r, idx) =>
-          idx === i ? { ...r, status: 'verified', usage: `${balance.currentUsage}/${balance.usageLimit}` } : r
+          idx === i ? { ...r, status: 'verified', usage: `${balance.currentUsage}/${balance.usageLimit}`, email } : r
         ))
       } catch (error) {
         failCount++
@@ -585,6 +594,11 @@ export function ImportTokenJsonDialog({ open, onOpenChange }: ImportTokenJsonDia
                           <span className="text-sm font-medium">
                             凭据 #{result.credentialId || result.index + 1}
                           </span>
+                          {result.email && (
+                            <span className="text-xs text-muted-foreground truncate max-w-[150px]" title={result.email}>
+                              {result.email}
+                            </span>
+                          )}
                           <span className="text-xs text-muted-foreground">
                             {getVerifyStatusText(result)}
                           </span>

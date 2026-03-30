@@ -294,6 +294,7 @@ export interface ImportItemResult {
   action: ImportAction
   reason?: string
   credentialId?: number
+  email?: string
 }
 
 // 导入汇总

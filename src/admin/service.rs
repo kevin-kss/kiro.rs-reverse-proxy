@@ -494,6 +494,7 @@ impl AdminService {
                     action: ImportAction::Invalid,
                     reason: Some("缺少 refreshToken".to_string()),
                     credential_id: None,
+                    email: None,
                 };
             }
         };
@@ -509,6 +510,7 @@ impl AdminService {
                 action: ImportAction::Invalid,
                 reason: Some(format!("{} 认证需要 clientId 和 clientSecret", auth_method)),
                 credential_id: None,
+                email: None,
             };
         }
 
@@ -520,6 +522,7 @@ impl AdminService {
                 action: ImportAction::Skipped,
                 reason: Some("凭据已存在".to_string()),
                 credential_id: None,
+                email: None,
             };
         }
 
@@ -531,6 +534,7 @@ impl AdminService {
                 action: ImportAction::Added,
                 reason: Some("预览模式".to_string()),
                 credential_id: None,
+                email: None,
             };
         }
 
@@ -571,6 +575,7 @@ impl AdminService {
                 action: ImportAction::Added,
                 reason: None,
                 credential_id: Some(credential_id),
+                email: None,
             },
             Err(e) => ImportItemResult {
                 index,
@@ -578,6 +583,7 @@ impl AdminService {
                 action: ImportAction::Invalid,
                 reason: Some(e.to_string()),
                 credential_id: None,
+                email: None,
             },
         }
     }

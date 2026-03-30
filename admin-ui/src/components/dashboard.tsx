@@ -761,6 +761,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                           />
                         </th>
                         <th className="p-3">ID</th>
+                        <th className="p-3">邮箱</th>
                         <th className="p-3">状态</th>
                         <th className="p-3">使用次数</th>
                         <th className="p-3">失败次数</th>
@@ -783,6 +784,9 @@ export function Dashboard({ onLogout }: DashboardProps) {
                               />
                             </td>
                             <td className="p-3 font-mono text-sm">#{credential.id}</td>
+                            <td className="p-3 text-sm truncate max-w-[200px]" title={credential.email || credential.accountEmail || ''}>
+                              {credential.email || credential.accountEmail || '-'}
+                            </td>
                             <td className="p-3">
                               <Badge variant={credential.disabled ? 'destructive' : 'default'}>
                                 {credential.disabled ? '已禁用' : '启用'}

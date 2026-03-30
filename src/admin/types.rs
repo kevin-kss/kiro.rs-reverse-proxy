@@ -298,6 +298,8 @@ pub struct ImportItemResult {
     pub reason: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub credential_id: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
 }
 
 /// 导入动作
