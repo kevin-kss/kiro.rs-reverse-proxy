@@ -1,6 +1,6 @@
 /target
 
-/config.json
+# /config.json
 /credentials.json
 /.idea
 /test.json
@@ -16,6 +16,7 @@
 /credentials.*
 
 *.json
+!config.json
 !admin-ui/package.json
 !admin-ui/tsconfig.json
 !admin-ui/components.json

@@ -195,6 +195,7 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 	if targetHost == "" {
 		targetHost = "q.us-east-1.amazonaws.com"
 	}
+	log.Printf("[TLS-PROXY] %s %s -> %s", r.Method, r.URL.Path, targetHost)
 	targetURL := "https://" + targetHost + r.URL.Path
 	if r.URL.RawQuery != "" {
 		targetURL += "?" + r.URL.RawQuery

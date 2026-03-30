@@ -1,0 +1,5 @@
+{
+  "apiKey": "sk-local-test",
+  "adminApiKey": "admin123",
+  "tlsProxyUrl": "http://127.0.0.1:8081"
+}
