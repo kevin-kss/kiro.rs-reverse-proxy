@@ -131,9 +131,22 @@ async fn main() {
                 let mut cmd = Command::new(&final_path);
                 cmd.arg("-port").arg(port.to_string());
                 
-                // 如果配置了上游代理，传递给 TLS 代理
+                // 如果配置了上游代理，传递给 TLS 代理（包含认证信息）
                 if let Some(ref proxy_url) = cfg.proxy_url {
-                    cmd.arg("-proxy").arg(proxy_url);
+                    // 构建包含认证信息的完整代理 URL
+                    let full_proxy_url = if let (Some(username), Some(password)) = (&cfg.proxy_username, &cfg.proxy_password) {
+                        // 解析 URL 并插入认证信息
+                        if let Some(at_pos) = proxy_url.find("://") {
+                            let scheme = &proxy_url[..at_pos + 3];
+                            let rest = &proxy_url[at_pos + 3..];
+                            format!("{}{}:{}@{}", scheme, username, password, rest)
+                        } else {
+                            proxy_url.clone()
+                        }
+                    } else {
+                        proxy_url.clone()
+                    };
+                    cmd.arg("-proxy").arg(&full_proxy_url);
                 }
                 
                 match cmd
