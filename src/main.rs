@@ -9,6 +9,7 @@ mod model;
 pub mod token;
 
 use std::sync::Arc;
+use std::process::{Command, Child, Stdio};
 
 use clap::Parser;
 use kiro::model::credentials::{CredentialsConfig, KiroCredentials};
@@ -95,6 +96,63 @@ async fn main() {
             config.read().proxy_url.as_ref().unwrap()
         );
     }
+
+    // 如果配置了 TLS 代理，自动启动 Go TLS 代理子进程
+    let _tls_proxy_child: Option<Child> = {
+        let cfg = config.read();
+        if let Some(ref tls_proxy_url) = cfg.tls_proxy_url {
+            // 从 URL 中提取端口号
+            let port = tls_proxy_url
+                .split(':')
+                .last()
+                .and_then(|p| p.parse::<u16>().ok())
+                .unwrap_or(8081);
+            
+            // 查找 tls-proxy 可执行文件
+            let exe_name = if cfg!(windows) { "tls-proxy.exe" } else { "tls-proxy" };
+            let exe_path = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|d| d.join(exe_name)))
+                .unwrap_or_else(|| std::path::PathBuf::from(exe_name));
+            
+            // 也尝试在 tls-proxy 子目录查找
+            let alt_path = std::path::PathBuf::from("tls-proxy").join(exe_name);
+            let final_path = if exe_path.exists() {
+                exe_path
+            } else if alt_path.exists() {
+                alt_path
+            } else {
+                tracing::warn!("TLS 代理可执行文件未找到: {} 或 {}", exe_path.display(), alt_path.display());
+                tracing::warn!("请确保 {} 在程序目录或 tls-proxy/ 子目录中", exe_name);
+                std::path::PathBuf::new()
+            };
+            
+            if final_path.exists() {
+                match Command::new(&final_path)
+                    .arg("-port")
+                    .arg(port.to_string())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                {
+                    Ok(child) => {
+                        tracing::info!("TLS 代理已启动: {} (端口 {})", final_path.display(), port);
+                        // 等待一小段时间让代理启动
+                        std::thread::sleep(std::time::Duration::from_millis(500));
+                        Some(child)
+                    }
+                    Err(e) => {
+                        tracing::error!("启动 TLS 代理失败: {}", e);
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    };
 
     // 创建 MultiTokenManager 和 KiroProvider
     let token_manager = MultiTokenManager::new(
