@@ -128,15 +128,25 @@ async fn main() {
             };
             
             if final_path.exists() {
-                match Command::new(&final_path)
-                    .arg("-port")
-                    .arg(port.to_string())
+                let mut cmd = Command::new(&final_path);
+                cmd.arg("-port").arg(port.to_string());
+                
+                // 如果配置了上游代理，传递给 TLS 代理
+                if let Some(ref proxy_url) = cfg.proxy_url {
+                    cmd.arg("-proxy").arg(proxy_url);
+                }
+                
+                match cmd
                     .stdout(Stdio::null())
                     .stderr(Stdio::null())
                     .spawn()
                 {
                     Ok(child) => {
-                        tracing::info!("TLS 代理已启动: {} (端口 {})", final_path.display(), port);
+                        if cfg.proxy_url.is_some() {
+                            tracing::info!("TLS 代理已启动: {} (端口 {}, 上游代理: {:?})", final_path.display(), port, cfg.proxy_url);
+                        } else {
+                            tracing::info!("TLS 代理已启动: {} (端口 {})", final_path.display(), port);
+                        }
                         // 等待一小段时间让代理启动
                         std::thread::sleep(std::time::Duration::from_millis(500));
                         Some(child)
