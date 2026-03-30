@@ -17,6 +17,9 @@
 /credentials.*
 
 *.json
+!admin-ui/package.json
+!admin-ui/tsconfig.json
+!admin-ui/components.json
 logs/
 data/
 
