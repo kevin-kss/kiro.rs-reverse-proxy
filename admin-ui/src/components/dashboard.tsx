@@ -13,7 +13,7 @@ import { BatchVerifyDialog, type VerifyResult } from '@/components/batch-verify-
 import { ProxyConfigDialog } from '@/components/proxy-config-dialog'
 import { GlobalConfigDialog } from '@/components/global-config-dialog'
 import { useCredentials, useCachedBalances, useDeleteCredential, useResetFailure, useSetDisabled, useProxyConfig, useGlobalConfig } from '@/hooks/use-credentials'
-import { getCredentialBalance } from '@/api/credentials'
+import { batchVerifyCredentials } from '@/api/credentials'
 import { extractErrorMessage } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
 import type { BalanceResponse } from '@/types/api'
@@ -39,6 +39,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const [verifying, setVerifying] = useState(false)
   const [verifyProgress, setVerifyProgress] = useState({ current: 0, total: 0 })
   const [verifyResults, setVerifyResults] = useState<Map<number, VerifyResult>>(new Map())
+  const [verifyConcurrency, setVerifyConcurrency] = useState(10)
   const [balanceMap, setBalanceMap] = useState<Map<number, BalanceResponse>>(new Map())
   const [loadingBalanceIds, setLoadingBalanceIds] = useState<Set<number>>(new Set())
   const cancelVerifyRef = useRef(false)
@@ -457,77 +458,46 @@ export function Dashboard({ onLogout }: DashboardProps) {
     cancelVerifyRef.current = false
     setVerifyProgress({ current: 0, total: ids.length })
 
-    let successCount = 0
-
-    // 初始化结果，所有凭据状态为 pending
+    // 初始化结果，所有凭据状态为 verifying
     const initialResults = new Map<number, VerifyResult>()
     ids.forEach(id => {
-      initialResults.set(id, { id, status: 'pending' })
+      initialResults.set(id, { id, status: 'verifying' })
     })
     setVerifyResults(initialResults)
     setVerifyDialogOpen(true)
 
-    // 开始验活
-    for (let i = 0; i < ids.length; i++) {
-      // 检查是否取消
-      if (cancelVerifyRef.current) {
-        toast.info('已取消验活')
-        break
+    try {
+      // 调用后端并发验活 API
+      const response = await batchVerifyCredentials({ ids, concurrency: verifyConcurrency })
+
+      // 更新结果
+      const newResults = new Map<number, VerifyResult>()
+      for (const item of response.results) {
+        newResults.set(item.id, {
+          id: item.id,
+          status: item.success ? 'success' : 'failed',
+          usage: item.remaining != null ? `$${item.remaining.toFixed(2)}` : undefined,
+          error: item.error || undefined,
+        })
       }
+      setVerifyResults(newResults)
+      setVerifyProgress({ current: ids.length, total: ids.length })
 
-      const id = ids[i]
-
-      // 更新当前凭据状态为 verifying
-      setVerifyResults(prev => {
-        const newResults = new Map(prev)
-        newResults.set(id, { id, status: 'verifying' })
-        return newResults
+      toast.success(`验活完成：成功 ${response.success}/${response.total}`)
+    } catch (error) {
+      toast.error(`验活失败: ${extractErrorMessage(error)}`)
+      // 标记所有为失败
+      const failedResults = new Map<number, VerifyResult>()
+      ids.forEach(id => {
+        failedResults.set(id, { id, status: 'failed', error: extractErrorMessage(error) })
       })
-
-      try {
-        const balance = await getCredentialBalance(id)
-        successCount++
-
-        // 更新为成功状态
-        setVerifyResults(prev => {
-          const newResults = new Map(prev)
-          newResults.set(id, {
-            id,
-            status: 'success',
-            usage: `${balance.currentUsage}/${balance.usageLimit}`
-          })
-          return newResults
-        })
-      } catch (error) {
-        // 更新为失败状态
-        setVerifyResults(prev => {
-          const newResults = new Map(prev)
-          newResults.set(id, {
-            id,
-            status: 'failed',
-            error: extractErrorMessage(error)
-          })
-          return newResults
-        })
-      }
-
-      // 更新进度
-      setVerifyProgress({ current: i + 1, total: ids.length })
-
-      // 添加延迟防止封号（最后一个不需要延迟）
-      if (i < ids.length - 1 && !cancelVerifyRef.current) {
-        await new Promise(resolve => setTimeout(resolve, 2000))
-      }
+      setVerifyResults(failedResults)
     }
 
     setVerifying(false)
 
     // 刷新凭据列表以获取更新后的邮箱等信息
     refetch()
-
-    if (!cancelVerifyRef.current) {
-      toast.success(`验活完成：成功 ${successCount}/${ids.length}`)
-    }
   }
 
   // 取消验活
@@ -741,14 +711,28 @@ export function Dashboard({ onLogout }: DashboardProps) {
                 </Button>
               )}
               {!verifying && data?.credentials && data.credentials.length > 0 && (
-                <Button
-                  onClick={handleBatchVerify}
-                  size="sm"
-                  variant="outline"
-                >
-                  <CheckCircle2 className="h-4 w-4 mr-2" />
-                  {selectedIds.size > 0 ? `验活选中(${selectedIds.size})` : '验活本页'}
-                </Button>
+                <div className="flex items-center gap-2">
+                  <select
+                    value={verifyConcurrency}
+                    onChange={(e) => setVerifyConcurrency(Number(e.target.value))}
+                    className="h-9 rounded-md border border-input bg-background px-2 text-sm"
+                    title="并发数"
+                  >
+                    <option value={5}>5并发</option>
+                    <option value={10}>10并发</option>
+                    <option value={20}>20并发</option>
+                    <option value={30}>30并发</option>
+                    <option value={50}>50并发</option>
+                  </select>
+                  <Button
+                    onClick={handleBatchVerify}
+                    size="sm"
+                    variant="outline"
+                  >
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                    {selectedIds.size > 0 ? `验活选中(${selectedIds.size})` : '验活本页'}
+                  </Button>
+                </div>
               )}
               {data?.credentials && data.credentials.length > 0 && (
                 <Button
@@ -849,7 +833,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
                                 {credential.disabled ? '已禁用' : '启用'}
                               </Badge>
                             </td>
-                            <td className="p-3 text-sm">{credential.callsTotal ?? '-'}</td>
+                            <td className="p-3 text-sm">{credential.successCount ?? '-'}</td>
                             <td className="p-3 text-sm">
                               {credential.failureCount > 0 ? (
                                 <span className="text-red-500">{credential.failureCount}</span>

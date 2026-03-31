@@ -7,7 +7,7 @@ use axum::{
 
 use super::{
     handlers::{
-        add_credential, delete_credential, get_all_credentials, get_cached_balances,
+        add_credential, batch_verify, delete_credential, get_all_credentials, get_cached_balances,
         get_credential_balance, get_global_config, get_proxy_config, import_token_json,
         reset_failure_count, set_credential_disabled, set_credential_priority,
         set_credential_region, update_global_config, update_proxy_config,
@@ -27,6 +27,7 @@ use super::{
 /// - `POST /credentials/:id/reset` - 重置失败计数
 /// - `GET /credentials/:id/balance` - 获取凭据余额
 /// - `GET /credentials/balances/cached` - 获取所有凭据的缓存余额
+/// - `POST /credentials/verify` - 批量验活凭据
 ///
 /// # 认证
 /// 需要 Admin API Key 认证，支持：
@@ -40,6 +41,7 @@ pub fn create_admin_router(state: AdminState) -> Router {
         )
         .route("/credentials/balances/cached", get(get_cached_balances))
         .route("/credentials/import-token-json", post(import_token_json))
+        .route("/credentials/verify", post(batch_verify))
         .route("/credentials/{id}", delete(delete_credential))
         .route("/credentials/{id}/disabled", post(set_credential_disabled))
         .route("/credentials/{id}/priority", post(set_credential_priority))

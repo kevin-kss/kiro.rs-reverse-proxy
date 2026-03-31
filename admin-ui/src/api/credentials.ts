@@ -17,6 +17,8 @@ import type {
   UpdateProxyConfigRequest,
   GlobalConfigResponse,
   UpdateGlobalConfigRequest,
+  BatchVerifyRequest,
+  BatchVerifyResponse,
 } from '@/types/api'
 
 // 创建 axios 实例
@@ -171,5 +173,13 @@ export async function getGlobalConfig(): Promise<GlobalConfigResponse> {
 // 更新全局配置
 export async function updateGlobalConfig(req: UpdateGlobalConfigRequest): Promise<SuccessResponse> {
   const { data } = await api.put<SuccessResponse>('/config/global', req)
+  return data
+}
+
+// 批量验活凭据（并发）
+export async function batchVerifyCredentials(
+  req: BatchVerifyRequest
+): Promise<BatchVerifyResponse> {
+  const { data } = await api.post<BatchVerifyResponse>('/credentials/verify', req)
   return data
 }

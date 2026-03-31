@@ -9,8 +9,8 @@ use axum::{
 use super::{
     middleware::AdminState,
     types::{
-        AddCredentialRequest, ImportTokenJsonRequest, SetDisabledRequest, SetPriorityRequest,
-        SetRegionRequest, SuccessResponse, UpdateProxyConfigRequest,
+        AddCredentialRequest, BatchVerifyRequest, ImportTokenJsonRequest, SetDisabledRequest,
+        SetPriorityRequest, SetRegionRequest, SuccessResponse, UpdateProxyConfigRequest,
     },
 };
 
@@ -135,6 +135,16 @@ pub async fn import_token_json(
     Json(payload): Json<ImportTokenJsonRequest>,
 ) -> impl IntoResponse {
     let response = state.service.import_token_json(payload).await;
+    Json(response)
+}
+
+/// POST /api/admin/credentials/verify
+/// 批量验活凭据
+pub async fn batch_verify(
+    State(state): State<AdminState>,
+    Json(payload): Json<BatchVerifyRequest>,
+) -> impl IntoResponse {
+    let response = state.service.batch_verify(payload).await;
     Json(response)
 }
 

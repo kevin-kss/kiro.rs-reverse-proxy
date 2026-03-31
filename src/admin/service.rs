@@ -5,6 +5,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use chrono::Utc;
+use futures::stream::{self, StreamExt};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
@@ -18,10 +19,11 @@ use parking_lot::RwLock;
 
 use super::error::AdminServiceError;
 use super::types::{
-    AddCredentialRequest, AddCredentialResponse, BalanceResponse, CachedBalanceItem,
-    CachedBalancesResponse, CredentialStatusItem, CredentialsStatusResponse, ImportAction,
-    ImportItemResult, ImportSummary, ImportTokenJsonRequest, ImportTokenJsonResponse,
-    ProxyConfigResponse, TokenJsonItem, UpdateProxyConfigRequest,
+    AddCredentialRequest, AddCredentialResponse, BalanceResponse, BatchVerifyRequest,
+    BatchVerifyResponse, CachedBalanceItem, CachedBalancesResponse, CredentialStatusItem,
+    CredentialsStatusResponse, ImportAction, ImportItemResult, ImportSummary,
+    ImportTokenJsonRequest, ImportTokenJsonResponse, ProxyConfigResponse, TokenJsonItem,
+    UpdateProxyConfigRequest, VerifyResultItem,
 };
 
 /// 余额缓存过期时间（秒），5 分钟
@@ -227,6 +229,59 @@ impl AdminService {
             .collect();
 
         CachedBalancesResponse { balances }
+    }
+
+    /// 批量验活凭据（并发处理）
+    pub async fn batch_verify(&self, req: BatchVerifyRequest) -> BatchVerifyResponse {
+        // 获取要验活的凭据 ID 列表
+        let ids: Vec<u64> = match req.ids {
+            Some(ids) if !ids.is_empty() => ids,
+            _ => {
+                // 验活所有凭据
+                let snapshot = self.token_manager.snapshot();
+                snapshot.entries.iter().map(|e| e.id).collect()
+            }
+        };
+
+        let concurrency = req.concurrency.max(1).min(50); // 限制并发数 1-50
+        let total = ids.len();
+
+        // 并发验活
+        let results: Vec<VerifyResultItem> = stream::iter(ids)
+            .map(|id| async move {
+                match self.fetch_balance(id).await {
+                    Ok(balance) => VerifyResultItem {
+                        id,
+                        success: true,
+                        remaining: Some(balance.remaining),
+                        error: None,
+                    },
+                    Err(e) => VerifyResultItem {
+                        id,
+                        success: false,
+                        remaining: None,
+                        error: Some(e.to_string()),
+                    },
+                }
+            })
+            .buffer_unordered(concurrency)
+            .collect()
+            .await;
+
+        // 按 ID 排序
+        let mut results = results;
+        results.sort_by_key(|r| r.id);
+
+        // 统计
+        let success = results.iter().filter(|r| r.success).count();
+        let failed = total - success;
+
+        BatchVerifyResponse {
+            total,
+            success,
+            failed,
+            results,
+        }
     }
 
     /// 添加新凭据
@@ -442,28 +497,46 @@ impl AdminService {
         }
     }
 
-    /// 批量导入 token.json
+    /// 批量导入 token.json（并发处理）
     ///
     /// 解析官方 token.json 格式，按 provider 字段自动映射 authMethod：
     /// - BuilderId/builder-id/idc → idc
     /// - Social/social → social
+    ///
+    /// 并发策略：
+    /// - 并发执行 Token 刷新验证（最耗时的网络请求）
+    /// - 串行添加到 entries（避免 ID 冲突）
+    /// - 最后一次性持久化
     pub async fn import_token_json(&self, req: ImportTokenJsonRequest) -> ImportTokenJsonResponse {
         let items = req.items.into_vec();
         let dry_run = req.dry_run;
+        let concurrency = 10; // 并发数限制
 
-        let mut results = Vec::with_capacity(items.len());
+        // 并发处理所有项
+        let indexed_items: Vec<(usize, TokenJsonItem)> = items.into_iter().enumerate().collect();
+        
+        let results: Vec<ImportItemResult> = stream::iter(indexed_items)
+            .map(|(index, item)| async move {
+                self.process_token_json_item(index, item, dry_run).await
+            })
+            .buffer_unordered(concurrency)
+            .collect()
+            .await;
+
+        // 按 index 排序，保持原始顺序
+        let mut results = results;
+        results.sort_by_key(|r| r.index);
+
+        // 统计结果
         let mut added = 0usize;
         let mut skipped = 0usize;
         let mut invalid = 0usize;
-
-        for (index, item) in items.into_iter().enumerate() {
-            let result = self.process_token_json_item(index, item, dry_run).await;
+        for result in &results {
             match result.action {
                 ImportAction::Added => added += 1,
                 ImportAction::Skipped => skipped += 1,
                 ImportAction::Invalid => invalid += 1,
             }
-            results.push(result);
         }
 
         ImportTokenJsonResponse {
@@ -572,14 +645,30 @@ impl AdminService {
         };
 
         match self.token_manager.add_credential(new_cred).await {
-            Ok(credential_id) => ImportItemResult {
-                index,
-                fingerprint,
-                action: ImportAction::Added,
-                reason: None,
-                credential_id: Some(credential_id),
-                email: None,
-            },
+            Ok(credential_id) => {
+                // 添加成功后，获取余额和邮箱信息
+                let email = match self.token_manager.get_usage_limits_for(credential_id).await {
+                    Ok(usage) => {
+                        let remaining = usage.usage_limit() - usage.current_usage();
+                        self.token_manager.update_balance_cache(credential_id, remaining);
+                        let email = usage.email().map(|s| s.to_string());
+                        self.token_manager.update_credential_email(credential_id, email.clone());
+                        email
+                    }
+                    Err(e) => {
+                        tracing::warn!("凭据 #{} 获取余额/邮箱失败: {}", credential_id, e);
+                        None
+                    }
+                };
+                ImportItemResult {
+                    index,
+                    fingerprint,
+                    action: ImportAction::Added,
+                    reason: None,
+                    credential_id: Some(credential_id),
+                    email,
+                }
+            }
             Err(e) => ImportItemResult {
                 index,
                 fingerprint,

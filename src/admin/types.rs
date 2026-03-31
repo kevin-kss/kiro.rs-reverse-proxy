@@ -182,6 +182,52 @@ pub struct CachedBalancesResponse {
     pub balances: Vec<CachedBalanceItem>,
 }
 
+// ============ 批量验活 ============
+
+/// 批量验活请求
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchVerifyRequest {
+    /// 要验活的凭据 ID 列表，空则验活所有
+    #[serde(default)]
+    pub ids: Option<Vec<u64>>,
+    /// 并发数（默认 10）
+    #[serde(default = "default_concurrency")]
+    pub concurrency: usize,
+}
+
+fn default_concurrency() -> usize {
+    10
+}
+
+/// 单个凭据验活结果
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VerifyResultItem {
+    /// 凭据 ID
+    pub id: u64,
+    /// 是否成功
+    pub success: bool,
+    /// 剩余额度（成功时）
+    pub remaining: Option<f64>,
+    /// 错误信息（失败时）
+    pub error: Option<String>,
+}
+
+/// 批量验活响应
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BatchVerifyResponse {
+    /// 总数
+    pub total: usize,
+    /// 成功数
+    pub success: usize,
+    /// 失败数
+    pub failed: usize,
+    /// 各凭据验活结果
+    pub results: Vec<VerifyResultItem>,
+}
+
 // ============ 负载均衡配置 ============
 
 // ============ 全局代理配置 ============

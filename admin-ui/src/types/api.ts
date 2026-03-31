@@ -311,6 +311,30 @@ export interface ImportTokenJsonResponse {
   items: ImportItemResult[]
 }
 
+// ============ 批量验活 ============
+
+// 批量验活请求
+export interface BatchVerifyRequest {
+  ids?: number[]
+  concurrency?: number
+}
+
+// 单个凭据验活结果
+export interface VerifyResultItem {
+  id: number
+  success: boolean
+  remaining: number | null
+  error: string | null
+}
+
+// 批量验活响应
+export interface BatchVerifyResponse {
+  total: number
+  success: number
+  failed: number
+  results: VerifyResultItem[]
+}
+
 // ============ 全局代理配置 ============
 
 export interface ProxyConfigResponse {
