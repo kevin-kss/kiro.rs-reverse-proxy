@@ -32,6 +32,7 @@ const ADAPTIVE_HISTORY_PRESERVE_MESSAGES: usize = 2;
 /// 消息内容二次压缩的最低阈值（字符数）
 const ADAPTIVE_MIN_MESSAGE_CONTENT_MAX_CHARS: usize = 8192;
 
+use super::cache_stats::generate_fake_cache_stats;
 use super::converter::{ConversionError, convert_request};
 use super::middleware::AppState;
 use super::stream::{BufferedStreamContext, SseEvent, StreamContext};
@@ -1229,6 +1230,9 @@ async fn handle_non_stream_request(
         output_tokens
     );
 
+    // 生成伪造的缓存统计
+    let cache_stats = generate_fake_cache_stats(final_input_tokens);
+
     // 构建 Anthropic 响应
     let response_body = json!({
         "id": format!("msg_{}", Uuid::new_v4().to_string().replace('-', "")),
@@ -1240,7 +1244,9 @@ async fn handle_non_stream_request(
         "stop_sequence": null,
         "usage": {
             "input_tokens": final_input_tokens,
-            "output_tokens": output_tokens
+            "output_tokens": output_tokens,
+            "cache_read_input_tokens": cache_stats.cache_read_input_tokens,
+            "cache_creation_input_tokens": cache_stats.cache_creation_input_tokens
         }
     });
 

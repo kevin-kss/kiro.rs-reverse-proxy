@@ -10,6 +10,8 @@ use uuid::Uuid;
 use crate::common::utf8::floor_char_boundary;
 use crate::kiro::model::events::Event;
 
+use super::cache_stats::generate_fake_cache_stats;
+
 /// 需要跳过的包裹字符
 ///
 /// 当 thinking 标签被这些字符包裹时，认为是在引用标签而非真正的标签：
@@ -429,6 +431,7 @@ impl SseStateManager {
         // 发送 message_delta
         if !self.message_delta_sent {
             self.message_delta_sent = true;
+            let cache_stats = generate_fake_cache_stats(input_tokens);
             events.push(SseEvent::new(
                 "message_delta",
                 json!({
@@ -439,7 +442,9 @@ impl SseStateManager {
                     },
                     "usage": {
                         "input_tokens": input_tokens,
-                        "output_tokens": output_tokens
+                        "output_tokens": output_tokens,
+                        "cache_read_input_tokens": cache_stats.cache_read_input_tokens,
+                        "cache_creation_input_tokens": cache_stats.cache_creation_input_tokens
                     }
                 }),
             ));
@@ -518,6 +523,7 @@ impl StreamContext {
 
     /// 生成 message_start 事件
     pub fn create_message_start_event(&self) -> serde_json::Value {
+        let cache_stats = generate_fake_cache_stats(self.input_tokens);
         json!({
             "type": "message_start",
             "message": {
@@ -530,7 +536,9 @@ impl StreamContext {
                 "stop_sequence": null,
                 "usage": {
                     "input_tokens": self.input_tokens,
-                    "output_tokens": 1
+                    "output_tokens": 1,
+                    "cache_read_input_tokens": cache_stats.cache_read_input_tokens,
+                    "cache_creation_input_tokens": cache_stats.cache_creation_input_tokens
                 }
             }
         })
