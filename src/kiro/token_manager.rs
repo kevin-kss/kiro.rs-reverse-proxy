@@ -1046,48 +1046,16 @@ impl MultiTokenManager {
         );
     }
 
-    /// 选择最佳凭据（两级排序：使用次数最少 + 余额最多；完全相同则轮询）
+    /// 选择凭据（纯轮询策略，均匀分配请求到所有可用凭据）
     fn select_best_candidate_id(&self, candidate_ids: &[u64]) -> Option<u64> {
         if candidate_ids.is_empty() {
             return None;
         }
 
+        // 纯轮询：按顺序轮流选择凭据，不考虑余额和使用次数
         let rr = self.selection_rr.fetch_add(1, Ordering::Relaxed) as usize;
-        let cache = self.balance_cache.lock();
-
-        let mut scored: Vec<(u64, u32, f64)> = Vec::with_capacity(candidate_ids.len());
-        for &id in candidate_ids {
-            let (usage, balance, initialized) = cache
-                .get(&id)
-                .map(|c| (c.recent_usage, c.remaining, c.initialized))
-                .unwrap_or((0, 0.0, false));
-            // 未初始化的凭据视为使用次数最大，避免被优先选中
-            let effective_usage = if initialized { usage } else { u32::MAX };
-            // NaN 余额归一化为 0.0，避免 total_cmp 将 NaN 视为最大值
-            let effective_balance = if balance.is_finite() { balance } else { 0.0 };
-            scored.push((id, effective_usage, effective_balance));
-        }
-
-        // 第一优先级：使用次数最少
-        let min_usage = scored.iter().map(|(_, usage, _)| *usage).min()?;
-        scored.retain(|(_, usage, _)| *usage == min_usage);
-
-        // 第二优先级：余额最多（使用次数相同）
-        let mut max_balance = scored.first().map(|(_, _, b)| *b).unwrap_or(0.0);
-        for &(_, _, balance) in &scored {
-            if balance > max_balance {
-                max_balance = balance;
-            }
-        }
-        scored.retain(|(_, _, balance)| *balance == max_balance);
-
-        if scored.len() == 1 {
-            return Some(scored[0].0);
-        }
-
-        // 兜底：完全相同则轮询，避免总选第一个
-        let index = rr % scored.len();
-        Some(scored[index].0)
+        let index = rr % candidate_ids.len();
+        Some(candidate_ids[index])
     }
 
     /// 获取 API 调用上下文
