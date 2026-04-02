@@ -2077,7 +2077,7 @@ impl MultiTokenManager {
 
         tracing::info!("正在初始化 {} 个凭据的余额（并发模式）...", credential_ids.len());
 
-        // 并发查询所有凭据的余额（最多 5 个并发）
+        // 并发查询所有凭据的余额（最多 20 个并发，加快启动速度）
         use futures::stream::{self, StreamExt};
         
         let results: Vec<(u64, Result<UsageLimitsResponse, anyhow::Error>)> = stream::iter(credential_ids.clone())
@@ -2085,7 +2085,7 @@ impl MultiTokenManager {
                 let result = self.get_usage_limits_for(id).await;
                 (id, result)
             })
-            .buffer_unordered(5) // 最多 5 个并发请求
+            .buffer_unordered(20) // 最多 20 个并发请求
             .collect()
             .await;
 
