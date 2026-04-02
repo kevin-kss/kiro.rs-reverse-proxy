@@ -638,8 +638,8 @@ pub struct MultiTokenManager {
     proxy: RwLock<Option<ProxyConfig>>,
     /// 凭据条目列表
     entries: Mutex<Vec<CredentialEntry>>,
-    /// Token 刷新锁，确保同一时间只有一个刷新操作
-    refresh_lock: TokioMutex<()>,
+    /// Token 刷新锁（每个凭据一个锁，允许不同凭据并发刷新）
+    refresh_locks: Mutex<HashMap<u64, Arc<TokioMutex<()>>>>,
     /// 凭据文件路径（用于回写）
     credentials_path: Option<PathBuf>,
     /// 是否为多凭据格式（数组格式才回写）
@@ -866,7 +866,7 @@ impl MultiTokenManager {
             config: RwLock::new(config),
             proxy: RwLock::new(proxy),
             entries: Mutex::new(entries),
-            refresh_lock: TokioMutex::new(()),
+            refresh_locks: Mutex::new(HashMap::new()),
             credentials_path,
             is_multiple_format,
             model_unavailable_count: AtomicU32::new(0),
@@ -909,6 +909,12 @@ impl MultiTokenManager {
     /// 热更新全局 Region
     pub fn update_region(&self, region: String) {
         self.config.write().region = region;
+    }
+
+    /// 获取指定凭据的刷新锁（每个凭据独立的锁，允许不同凭据并发刷新）
+    fn get_refresh_lock(&self, id: u64) -> Arc<TokioMutex<()>> {
+        let mut locks = self.refresh_locks.lock();
+        locks.entry(id).or_insert_with(|| Arc::new(TokioMutex::new(()))).clone()
     }
 
     /// 热更新单凭据目标请求速率（RPM）
@@ -1561,8 +1567,9 @@ impl MultiTokenManager {
             || is_token_expiring_soon(credentials);
 
         let creds = if needs_refresh {
-            // 获取刷新锁，确保同一时间只有一个刷新操作
-            let _guard = self.refresh_lock.lock().await;
+            // 获取该凭据的刷新锁（每个凭据独立，允许不同凭据并发刷新）
+            let lock = self.get_refresh_lock(id);
+            let _guard = lock.lock().await;
 
             // 第二次检查：获取锁后重新读取凭据，因为其他请求可能已经完成刷新
             let current_creds = {
@@ -2274,7 +2281,9 @@ impl MultiTokenManager {
         let needs_refresh = is_token_expired(&credentials) || is_token_expiring_soon(&credentials);
 
         let token = if needs_refresh {
-            let _guard = self.refresh_lock.lock().await;
+            // 获取该凭据的刷新锁（每个凭据独立，允许不同凭据并发刷新）
+            let lock = self.get_refresh_lock(id);
+            let _guard = lock.lock().await;
             let current_creds = {
                 let entries = self.entries.lock();
                 entries
