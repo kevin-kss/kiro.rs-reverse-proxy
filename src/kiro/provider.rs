@@ -516,8 +516,27 @@ impl KiroProvider {
                 continue;
             }
 
-            // 瞬态错误
-            if matches!(status.as_u16(), 408 | 429) || status.is_server_error() {
+            // 429 速率限制：设置冷却并切换凭据
+            if status.as_u16() == 429 {
+                tracing::warn!(
+                    "MCP 请求失败（429 速率限制，设置冷却并切换凭据，尝试 {}/{}）: {} {}",
+                    attempt + 1,
+                    max_retries,
+                    status,
+                    body
+                );
+                // 设置 60 秒冷却，下次选择时会跳过这个凭据
+                self.token_manager.set_credential_cooldown(
+                    ctx.id,
+                    crate::kiro::cooldown::CooldownReason::RateLimitExceeded,
+                );
+                last_error = Some(anyhow::anyhow!("MCP 请求失败: {} {}", status, body));
+                // 不等待，直接切换到下一个凭据
+                continue;
+            }
+
+            // 408/5xx - 瞬态上游错误
+            if status.as_u16() == 408 || status.is_server_error() {
                 tracing::warn!(
                     "MCP 请求失败（上游瞬态错误，尝试 {}/{}）: {} {}",
                     attempt + 1,
@@ -796,9 +815,32 @@ impl KiroProvider {
                 continue;
             }
 
-            // 429/408/5xx - 瞬态上游错误：重试但不禁用或切换凭据
-            // （避免 429 high traffic / 502 high load 等瞬态错误把所有凭据锁死）
-            if matches!(status.as_u16(), 408 | 429) || status.is_server_error() {
+            // 429 速率限制：设置冷却并切换凭据
+            if status.as_u16() == 429 {
+                tracing::warn!(
+                    "API 请求失败（429 速率限制，设置冷却并切换凭据，尝试 {}/{}）: {} {}",
+                    attempt + 1,
+                    max_retries,
+                    status,
+                    body
+                );
+                // 设置 60 秒冷却，下次选择时会跳过这个凭据
+                self.token_manager.set_credential_cooldown(
+                    ctx.id,
+                    crate::kiro::cooldown::CooldownReason::RateLimitExceeded,
+                );
+                last_error = Some(anyhow::anyhow!(
+                    "{} API 请求失败: {} {}",
+                    api_type,
+                    status,
+                    body
+                ));
+                // 不等待，直接切换到下一个凭据
+                continue;
+            }
+
+            // 408/5xx - 瞬态上游错误：重试但不切换凭据
+            if status.as_u16() == 408 || status.is_server_error() {
                 tracing::warn!(
                     "API 请求失败（上游瞬态错误，尝试 {}/{}）: {} {}",
                     attempt + 1,
