@@ -49,7 +49,12 @@ pub fn build_client(
     timeout_secs: u64,
     tls_backend: TlsBackend,
 ) -> anyhow::Result<Client> {
-    let mut builder = Client::builder().timeout(Duration::from_secs(timeout_secs));
+    let mut builder = Client::builder()
+        .timeout(Duration::from_secs(timeout_secs))
+        // 连接池配置：支持高并发场景
+        .pool_max_idle_per_host(200)  // 每个主机最多 200 个空闲连接
+        .pool_idle_timeout(Duration::from_secs(90))  // 空闲连接保持 90 秒
+        .tcp_keepalive(Duration::from_secs(60));  // TCP Keep-Alive 60 秒
 
     if tls_backend == TlsBackend::Rustls {
         builder = builder.use_rustls_tls();
