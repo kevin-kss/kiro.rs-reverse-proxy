@@ -662,6 +662,57 @@ pub async fn get_models() -> impl IntoResponse {
             max_completion_tokens: Some(64_000),
             thinking: Some(true),
         },
+        // DeepSeek
+        Model {
+            id: "deepseek-3.2".to_string(),
+            object: "model".to_string(),
+            created: 1735689600,
+            owned_by: "deepseek".to_string(),
+            display_name: "DeepSeek 3.2".to_string(),
+            model_type: "chat".to_string(),
+            max_tokens: 16000,
+            context_length: Some(128_000),
+            max_completion_tokens: Some(16_000),
+            thinking: None,
+        },
+        // GLM
+        Model {
+            id: "glm-5".to_string(),
+            object: "model".to_string(),
+            created: 1735689600,
+            owned_by: "zhipu".to_string(),
+            display_name: "GLM-5".to_string(),
+            model_type: "chat".to_string(),
+            max_tokens: 16000,
+            context_length: Some(200_000),
+            max_completion_tokens: Some(16_000),
+            thinking: None,
+        },
+        // MiniMax
+        Model {
+            id: "minimax-m2.5".to_string(),
+            object: "model".to_string(),
+            created: 1735689600,
+            owned_by: "minimax".to_string(),
+            display_name: "MiniMax M2.5".to_string(),
+            model_type: "chat".to_string(),
+            max_tokens: 16000,
+            context_length: Some(128_000),
+            max_completion_tokens: Some(16_000),
+            thinking: None,
+        },
+        Model {
+            id: "minimax-m2.1".to_string(),
+            object: "model".to_string(),
+            created: 1735689600,
+            owned_by: "minimax".to_string(),
+            display_name: "MiniMax M2.1".to_string(),
+            model_type: "chat".to_string(),
+            max_tokens: 16000,
+            context_length: Some(128_000),
+            max_completion_tokens: Some(16_000),
+            thinking: None,
+        },
     ];
 
     Json(ModelsResponse {

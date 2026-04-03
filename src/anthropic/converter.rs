@@ -147,6 +147,8 @@ fn count_images_in_content(content: &serde_json::Value) -> usize {
 /// - sonnet 且包含 4.6/4-6 → claude-sonnet-4.6，否则 → claude-sonnet-4.5
 /// - opus 且包含 4.5/4-5 → claude-opus-4.5，否则 → claude-opus-4.6
 /// - 所有 haiku → claude-haiku-4.5
+/// - deepseek → deepseek-v3.2
+/// - minimax → minimax-m2.5 或 minimax-m2.1
 /// - `-agentic` 后缀会被剥离后再映射
 pub fn map_model(model: &str) -> Option<String> {
     let model_lower = model.to_lowercase();
@@ -167,6 +169,19 @@ pub fn map_model(model: &str) -> Option<String> {
         }
     } else if model_lower.contains("haiku") {
         Some("claude-haiku-4.5".to_string())
+    } else if model_lower.contains("deepseek") {
+        // DeepSeek 3.2
+        Some("deepseek-3.2".to_string())
+    } else if model_lower.contains("minimax") {
+        // MiniMax M2.5 或 M2.1
+        if model_lower.contains("2.1") || model_lower.contains("2-1") {
+            Some("minimax-m2.1".to_string())
+        } else {
+            Some("minimax-m2.5".to_string())
+        }
+    } else if model_lower.contains("glm") {
+        // GLM-5
+        Some("glm-5".to_string())
     } else {
         None
     }
