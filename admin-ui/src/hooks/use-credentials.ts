@@ -9,6 +9,7 @@ import {
   resetCredentialFailure,
   getCredentialBalance,
   getCachedBalances,
+  getBalanceSummary,
   getCredentialAccountInfo,
   addCredential,
   getCredentialStats,
@@ -48,6 +49,16 @@ export function useCachedBalances() {
     queryFn: getCachedBalances,
     refetchInterval: (query) => (query.state.error ? 60000 : 30000),
     refetchIntervalInBackground: false, // 页面不可见时暂停轮询
+  })
+}
+
+// 查询余额统计汇总
+export function useBalanceSummary() {
+  return useQuery({
+    queryKey: ['balance-summary'],
+    queryFn: getBalanceSummary,
+    refetchInterval: (query) => (query.state.error ? 60000 : 30000),
+    refetchIntervalInBackground: false,
   })
 }
 

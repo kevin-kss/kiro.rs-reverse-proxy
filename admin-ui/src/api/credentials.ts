@@ -4,6 +4,7 @@ import type {
   CredentialsStatusResponse,
   BalanceResponse,
   CachedBalancesResponse,
+  BalanceSummaryResponse,
   SuccessResponse,
   SetDisabledRequest,
   SetPriorityRequest,
@@ -98,6 +99,12 @@ export async function getCredentialBalance(id: number): Promise<BalanceResponse>
 // 获取所有凭据的缓存余额
 export async function getCachedBalances(): Promise<CachedBalancesResponse> {
   const { data } = await api.get<CachedBalancesResponse>('/credentials/balances/cached')
+  return data
+}
+
+// 获取余额统计汇总
+export async function getBalanceSummary(): Promise<BalanceSummaryResponse> {
+  const { data } = await api.get<BalanceSummaryResponse>('/credentials/balances/summary')
   return data
 }
 

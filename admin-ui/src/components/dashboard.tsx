@@ -12,7 +12,7 @@ import { ImportTokenJsonDialog } from '@/components/import-token-json-dialog'
 import { BatchVerifyDialog, type VerifyResult } from '@/components/batch-verify-dialog'
 import { ProxyConfigDialog } from '@/components/proxy-config-dialog'
 import { GlobalConfigDialog } from '@/components/global-config-dialog'
-import { useCredentials, useCachedBalances, useDeleteCredential, useResetFailure, useSetDisabled, useProxyConfig, useGlobalConfig } from '@/hooks/use-credentials'
+import { useCredentials, useCachedBalances, useBalanceSummary, useDeleteCredential, useResetFailure, useSetDisabled, useProxyConfig, useGlobalConfig } from '@/hooks/use-credentials'
 import { batchVerifyCredentials } from '@/api/credentials'
 import { extractErrorMessage } from '@/lib/utils'
 import { Badge } from '@/components/ui/badge'
@@ -70,6 +70,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
   const queryClient = useQueryClient()
   const { data, isLoading, error, refetch } = useCredentials()
   const { data: cachedBalancesData } = useCachedBalances()
+  const { data: balanceSummary } = useBalanceSummary()
   const { mutate: deleteCredential } = useDeleteCredential()
   const { mutate: resetFailure } = useResetFailure()
   const { mutateAsync: setDisabled } = useSetDisabled()
@@ -560,7 +561,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
       {/* 主内容 */}
       <main className="container mx-auto px-4 md:px-8 py-6">
         {/* 统计卡片 */}
-        <div className="grid gap-4 md:grid-cols-3 mb-6">
+        <div className="grid gap-4 md:grid-cols-4 mb-6">
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">
@@ -579,6 +580,21 @@ export function Dashboard({ onLogout }: DashboardProps) {
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-green-600">{data?.available || 0}</div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm font-medium text-muted-foreground">
+                总余额
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-2xl font-bold text-blue-600">
+                ${balanceSummary?.totalRemaining?.toFixed(2) || '0.00'}
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">
+                {balanceSummary?.cachedCount || 0}/{balanceSummary?.totalCredentials || 0} 已统计 | 平均 ${balanceSummary?.avgRemaining?.toFixed(2) || '0.00'}
+              </div>
             </CardContent>
           </Card>
           <Card

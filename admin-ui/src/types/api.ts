@@ -64,6 +64,28 @@ export interface CachedBalancesResponse {
   balances: CachedBalanceInfo[]
 }
 
+// 余额统计汇总详情项
+export interface BalanceSummaryItem {
+  id: number
+  remaining: number
+  disabled: boolean
+  email: string | null
+  cachedAt: number | null
+}
+
+// 余额统计汇总响应
+export interface BalanceSummaryResponse {
+  totalCredentials: number
+  cachedCount: number
+  totalRemaining: number
+  avgRemaining: number
+  minRemaining: number | null
+  maxRemaining: number | null
+  zeroBalanceCount: number
+  lowBalanceCount: number
+  details: BalanceSummaryItem[]
+}
+
 // 成功响应
 export interface SuccessResponse {
   success: boolean
