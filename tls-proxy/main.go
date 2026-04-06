@@ -166,10 +166,10 @@ func createNodejsTransport(proxyURL string) *http.Transport {
 		},
 		ForceAttemptHTTP2:     false,
 		IdleConnTimeout:       90 * time.Second,
-		ResponseHeaderTimeout: 0, // No timeout for streaming
-		MaxIdleConns:          100,
-		MaxIdleConnsPerHost:   10,
-		MaxConnsPerHost:       20,
+		ResponseHeaderTimeout: 0,    // No timeout for streaming
+		MaxIdleConns:          1000, // 增大空闲连接池
+		MaxIdleConnsPerHost:   100,  // 每主机保持更多空闲连接
+		MaxConnsPerHost:       0,    // 0 = 无限制，不排队
 	}
 }
 
