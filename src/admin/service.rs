@@ -19,11 +19,11 @@ use parking_lot::RwLock;
 
 use super::error::AdminServiceError;
 use super::types::{
-    AddCredentialRequest, AddCredentialResponse, BalanceResponse, BatchVerifyRequest,
-    BatchVerifyResponse, CachedBalanceItem, CachedBalancesResponse, CredentialStatusItem,
-    CredentialsStatusResponse, ImportAction, ImportItemResult, ImportSummary,
-    ImportTokenJsonRequest, ImportTokenJsonResponse, ProxyConfigResponse, TokenJsonItem,
-    UpdateProxyConfigRequest, VerifyResultItem,
+    AddCredentialRequest, AddCredentialResponse, BalanceResponse, BalanceSummaryResponse,
+    BatchVerifyRequest, BatchVerifyResponse, CachedBalanceItem, CachedBalancesResponse,
+    CredentialStatusItem, CredentialsStatusResponse, ImportAction, ImportItemResult,
+    ImportSummary, ImportTokenJsonRequest, ImportTokenJsonResponse, ProxyConfigResponse,
+    TokenJsonItem, UpdateProxyConfigRequest, VerifyResultItem,
 };
 
 /// 余额缓存过期时间（秒），5 分钟
@@ -229,6 +229,67 @@ impl AdminService {
             .collect();
 
         CachedBalancesResponse { balances }
+    }
+
+    /// 获取余额统计汇总
+    pub fn get_balance_summary(&self) -> BalanceSummaryResponse {
+        use super::types::{BalanceSummaryItem, BalanceSummaryResponse};
+
+        let snapshot = self.token_manager.snapshot();
+        let cached_balances = self.token_manager.get_all_cached_balances();
+
+        // 构建 id -> cached_balance 映射
+        let balance_map: std::collections::HashMap<u64, _> = cached_balances
+            .into_iter()
+            .map(|b| (b.id, b))
+            .collect();
+
+        // 构建详情列表
+        let mut details: Vec<BalanceSummaryItem> = snapshot
+            .entries
+            .iter()
+            .map(|e| {
+                let cached = balance_map.get(&e.id);
+                BalanceSummaryItem {
+                    id: e.id,
+                    remaining: cached.map(|c| c.remaining).unwrap_or(0.0),
+                    disabled: e.disabled,
+                    email: e.email.clone(),
+                    cached_at: cached.map(|c| c.cached_at),
+                }
+            })
+            .collect();
+
+        // 按余额升序排列（余额低的在前）
+        details.sort_by(|a, b| a.remaining.partial_cmp(&b.remaining).unwrap_or(std::cmp::Ordering::Equal));
+
+        // 统计
+        let total_credentials = snapshot.entries.len();
+        let cached_count = balance_map.len();
+        let remainings: Vec<f64> = balance_map.values().map(|b| b.remaining).collect();
+
+        let total_remaining: f64 = remainings.iter().sum();
+        let avg_remaining = if cached_count > 0 {
+            total_remaining / cached_count as f64
+        } else {
+            0.0
+        };
+        let min_remaining = remainings.iter().cloned().reduce(f64::min);
+        let max_remaining = remainings.iter().cloned().reduce(f64::max);
+        let zero_balance_count = remainings.iter().filter(|&&r| r <= 0.0).count();
+        let low_balance_count = remainings.iter().filter(|&&r| r > 0.0 && r < 1.0).count();
+
+        BalanceSummaryResponse {
+            total_credentials,
+            cached_count,
+            total_remaining,
+            avg_remaining,
+            min_remaining,
+            max_remaining,
+            zero_balance_count,
+            low_balance_count,
+            details,
+        }
     }
 
     /// 批量验活凭据（并发处理）

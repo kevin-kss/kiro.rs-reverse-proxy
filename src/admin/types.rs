@@ -182,6 +182,46 @@ pub struct CachedBalancesResponse {
     pub balances: Vec<CachedBalanceItem>,
 }
 
+/// 余额统计汇总响应
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BalanceSummaryResponse {
+    /// 凭据总数
+    pub total_credentials: usize,
+    /// 有缓存余额的凭据数
+    pub cached_count: usize,
+    /// 总剩余额度（所有有缓存的凭据）
+    pub total_remaining: f64,
+    /// 平均剩余额度
+    pub avg_remaining: f64,
+    /// 最小剩余额度
+    pub min_remaining: Option<f64>,
+    /// 最大剩余额度
+    pub max_remaining: Option<f64>,
+    /// 余额为 0 的凭据数
+    pub zero_balance_count: usize,
+    /// 余额低于阈值的凭据数（阈值 1.0）
+    pub low_balance_count: usize,
+    /// 各凭据详情（按余额升序排列）
+    pub details: Vec<BalanceSummaryItem>,
+}
+
+/// 余额统计详情项
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BalanceSummaryItem {
+    /// 凭据 ID
+    pub id: u64,
+    /// 剩余额度
+    pub remaining: f64,
+    /// 是否禁用
+    pub disabled: bool,
+    /// 用户邮箱
+    pub email: Option<String>,
+    /// 缓存时间（Unix 毫秒时间戳）
+    pub cached_at: Option<u64>,
+}
+
 // ============ 批量验活 ============
 
 /// 批量验活请求

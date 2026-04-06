@@ -104,6 +104,12 @@ pub async fn get_cached_balances(State(state): State<AdminState>) -> impl IntoRe
     Json(state.service.get_cached_balances())
 }
 
+/// GET /api/admin/credentials/balances/summary
+/// 获取余额统计汇总
+pub async fn get_balance_summary(State(state): State<AdminState>) -> impl IntoResponse {
+    Json(state.service.get_balance_summary())
+}
+
 /// POST /api/admin/credentials
 /// 添加新凭据
 pub async fn add_credential(
