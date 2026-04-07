@@ -15,6 +15,14 @@ RUN npm install -g pnpm && pnpm install
 COPY admin-ui ./
 RUN pnpm build
 
+# Go TLS 指纹代理构建阶段
+FROM golang:1.21-alpine AS tls-proxy-builder
+WORKDIR /app/tls-proxy
+COPY tls-proxy/go.mod tls-proxy/go.sum ./
+RUN go mod download
+COPY tls-proxy/main.go ./
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o tls-proxy .
+
 FROM chef AS builder
 
 # 可选：启用敏感日志输出（仅用于排障）
@@ -43,6 +51,7 @@ RUN apk add --no-cache ca-certificates
 
 WORKDIR /app
 COPY --from=builder /app/target/release/kiro-rs /app/kiro-rs
+COPY --from=tls-proxy-builder /app/tls-proxy/tls-proxy /app/tls-proxy
 
 VOLUME ["/app/config"]
 

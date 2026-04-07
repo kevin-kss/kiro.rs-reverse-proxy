@@ -40,6 +40,10 @@ src/debug.rs
 test.json
 tools/
 
+# TLS proxy pre-built binaries (source is kept for Docker build)
+tls-proxy/tls-proxy.exe
+tls-proxy/tls-proxy
+
 # OS-specific files
 .DS_Store
 Thumbs.db
