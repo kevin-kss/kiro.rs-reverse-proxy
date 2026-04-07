@@ -91,7 +91,11 @@ func nodejsSpec() *utls.ClientHelloSpec {
 }
 
 func nodejsDialTLS(ctx context.Context, proxyURL *url.URL, addr string) (net.Conn, error) {
-	dialer := &net.Dialer{Timeout: 15 * time.Second, KeepAlive: 30 * time.Second}
+	dialer := &net.Dialer{
+		Timeout:   15 * time.Second,
+		KeepAlive: 30 * time.Second,
+		DualStack: true, // 支持 IPv4/IPv6 双栈
+	}
 
 	var rawConn net.Conn
 	var err error
@@ -159,17 +163,27 @@ func createNodejsTransport(proxyURL string) *http.Transport {
 			return nodejsDialTLS(ctx, parsedProxy, addr)
 		},
 		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			if parsedProxy != nil {
-				return (&net.Dialer{Timeout: 15 * time.Second}).DialContext(ctx, network, parsedProxy.Host)
+			dialer := &net.Dialer{
+				Timeout:   15 * time.Second,
+				KeepAlive: 30 * time.Second,
+				DualStack: true,
 			}
-			return (&net.Dialer{Timeout: 15 * time.Second}).DialContext(ctx, network, addr)
+			if parsedProxy != nil {
+				return dialer.DialContext(ctx, network, parsedProxy.Host)
+			}
+			return dialer.DialContext(ctx, network, addr)
 		},
-		ForceAttemptHTTP2:     false,
-		IdleConnTimeout:       90 * time.Second,
-		ResponseHeaderTimeout: 0,    // No timeout for streaming
-		MaxIdleConns:          1000, // 增大空闲连接池
-		MaxIdleConnsPerHost:   100,  // 每主机保持更多空闲连接
-		MaxConnsPerHost:       0,    // 0 = 无限制，不排队
+		ForceAttemptHTTP2:      false,
+		IdleConnTimeout:        90 * time.Second,
+		ResponseHeaderTimeout:  0,     // No timeout for streaming
+		ExpectContinueTimeout:  0,     // 禁用 Expect: 100-continue
+		MaxIdleConns:           1000,  // 增大空闲连接池
+		MaxIdleConnsPerHost:    200,   // 每主机保持更多空闲连接
+		MaxConnsPerHost:        0,     // 0 = 无限制，不排队
+		DisableKeepAlives:      false, // 启用 Keep-Alive
+		DisableCompression:     true,  // 禁用压缩，减少 CPU 开销
+		WriteBufferSize:        32768, // 32KB 写缓冲
+		ReadBufferSize:         32768, // 32KB 读缓冲
 	}
 }
 
@@ -253,13 +267,13 @@ func proxyHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Stream response body with immediate flush for SSE
 	flusher, canFlush := w.(http.Flusher)
-	buf := make([]byte, 1) // Read byte by byte for real-time streaming
+	buf := make([]byte, 4096) // 使用更大的缓冲区提高吞吐量
 	for {
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
 			w.Write(buf[:n])
-			// Flush on newline (SSE events end with \n\n)
-			if canFlush && buf[0] == '\n' {
+			// Flush after each read for SSE real-time streaming
+			if canFlush {
 				flusher.Flush()
 			}
 		}
