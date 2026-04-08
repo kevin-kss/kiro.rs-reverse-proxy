@@ -2679,6 +2679,12 @@ impl MultiTokenManager {
     #[allow(dead_code)]
     pub async fn refresh_token_for_credential(&self, id: u64) -> anyhow::Result<RefreshResult> {
         let config = self.config.read().clone();
+
+        // 获取该凭据的刷新锁（与请求时的刷新共用同一把锁，避免重复刷新）
+        let lock = self.get_refresh_lock(id);
+        let _guard = lock.lock().await;
+
+        // 获取锁后重新读取凭据（其他请求可能已经完成刷新）
         let credentials = {
             let entries = self.entries.lock();
             entries
@@ -2687,6 +2693,14 @@ impl MultiTokenManager {
                 .map(|e| e.credentials.clone())
                 .ok_or_else(|| anyhow::anyhow!("凭据不存在: {}", id))?
         };
+
+        // 检查是否仍需要刷新（双重检查锁定）
+        if !is_token_expired(&credentials) && !is_token_expiring_soon(&credentials) {
+            // 其他请求已经完成刷新，跳过
+            let expires_at = credentials.expires_at.unwrap_or_default();
+            tracing::debug!("凭据 #{} Token 已被其他请求刷新，跳过后台刷新", id);
+            return Ok(RefreshResult::success(id, expires_at));
+        }
 
         // 尝试刷新
         let proxy = self.proxy.read().clone();
