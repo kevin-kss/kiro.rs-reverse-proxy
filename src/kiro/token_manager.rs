@@ -664,6 +664,10 @@ pub struct MultiTokenManager {
     last_stats_save_at: Mutex<Option<Instant>>,
     /// 统计数据是否有未落盘更新
     stats_dirty: AtomicBool,
+    /// 凭据数据是否有未落盘更新（用于异步写入）
+    credentials_dirty: AtomicBool,
+    /// 最近一次凭据持久化时间（用于 debounce）
+    last_credentials_save_at: Mutex<Option<Instant>>,
 }
 
 /// 凭据可用性诊断：被禁用的凭据
@@ -704,6 +708,9 @@ const GLOBAL_DISABLE_RECOVERY_MINUTES: i64 = 5;
 
 /// 统计数据持久化防抖间隔
 const STATS_SAVE_DEBOUNCE: StdDuration = StdDuration::from_secs(30);
+
+/// 凭据数据持久化防抖间隔（Token 刷新后延迟写入，合并多次刷新）
+const CREDENTIALS_SAVE_DEBOUNCE: StdDuration = StdDuration::from_secs(5);
 
 /// API 调用上下文
 ///
@@ -879,6 +886,8 @@ impl MultiTokenManager {
             background_refresher: None,
             last_stats_save_at: Mutex::new(None),
             stats_dirty: AtomicBool::new(false),
+            credentials_dirty: AtomicBool::new(false),
+            last_credentials_save_at: Mutex::new(None),
         };
 
         // 如果有新分配的 ID 或新生成的 machineId，立即持久化到配置文件
@@ -1600,10 +1609,8 @@ impl MultiTokenManager {
                     }
                 }
 
-                // 回写凭据到文件（仅多凭据格式），失败只记录警告
-                if let Err(e) = self.persist_credentials() {
-                    tracing::warn!("Token 刷新后持久化失败（不影响本次请求）: {}", e);
-                }
+                // 标记凭据需要持久化（异步写入，不阻塞当前请求）
+                self.mark_credentials_dirty();
 
                 new_creds
             } else {
@@ -1727,6 +1734,56 @@ impl MultiTokenManager {
 
         tracing::debug!("已回写凭据到文件: {:?}", path);
         Ok(true)
+    }
+
+    /// 标记凭据数据需要持久化（异步写入，带防抖）
+    ///
+    /// 调用此方法后，凭据数据会在 CREDENTIALS_SAVE_DEBOUNCE 间隔后异步写入磁盘。
+    /// 多次调用会合并为一次写入，避免频繁 IO。
+    fn mark_credentials_dirty(&self) {
+        self.credentials_dirty.store(true, Ordering::SeqCst);
+    }
+
+    /// 尝试异步持久化凭据（带防抖）
+    ///
+    /// 如果距离上次写入时间不足 CREDENTIALS_SAVE_DEBOUNCE，则跳过本次写入。
+    /// 这样可以合并多次 Token 刷新为一次磁盘写入。
+    pub fn try_persist_credentials_debounced(&self) {
+        // 检查是否有脏数据
+        if !self.credentials_dirty.load(Ordering::SeqCst) {
+            return;
+        }
+
+        // 检查防抖间隔
+        let now = Instant::now();
+        {
+            let last_save = self.last_credentials_save_at.lock();
+            if let Some(last) = *last_save {
+                if now.duration_since(last) < CREDENTIALS_SAVE_DEBOUNCE {
+                    return;
+                }
+            }
+        }
+
+        // 清除脏标记并更新时间
+        self.credentials_dirty.store(false, Ordering::SeqCst);
+        *self.last_credentials_save_at.lock() = Some(now);
+
+        // 异步写入（不阻塞当前请求）
+        if let Err(e) = self.persist_credentials() {
+            tracing::warn!("凭据异步持久化失败: {}", e);
+            // 写入失败，重新标记为脏
+            self.credentials_dirty.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// 强制持久化凭据（用于关闭时确保数据落盘）
+    pub fn flush_credentials(&self) {
+        if self.credentials_dirty.swap(false, Ordering::SeqCst) {
+            if let Err(e) = self.persist_credentials() {
+                tracing::warn!("凭据强制持久化失败: {}", e);
+            }
+        }
     }
 
     /// 获取缓存目录（凭据文件所在目录）
@@ -1861,6 +1918,8 @@ impl MultiTokenManager {
             }
         }
         self.save_stats_debounced();
+        // 尝试异步持久化凭据（如果有脏数据且超过防抖间隔）
+        self.try_persist_credentials_debounced();
     }
 
     /// 报告指定凭据 API 调用失败
@@ -2700,8 +2759,15 @@ impl MultiTokenManager {
 
 impl Drop for MultiTokenManager {
     fn drop(&mut self) {
+        // 确保统计数据落盘
         if self.stats_dirty.load(Ordering::Relaxed) {
             self.save_stats();
+        }
+        // 确保凭据数据落盘
+        if self.credentials_dirty.load(Ordering::Relaxed) {
+            if let Err(e) = self.persist_credentials() {
+                tracing::warn!("关闭时凭据持久化失败: {}", e);
+            }
         }
     }
 }
