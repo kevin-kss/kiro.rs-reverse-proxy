@@ -191,6 +191,12 @@ async fn main() {
     });
     let token_manager = Arc::new(token_manager);
 
+    // 启动后台 Token 刷新器（避免请求时的刷新延迟）
+    let _background_refresher = token_manager.start_background_refresh(
+        kiro::background_refresh::BackgroundRefreshConfig::default(),
+    );
+    tracing::info!("后台 Token 刷新器已启动");
+
     // 初始化余额缓存并按余额选择初始凭据
     let init_count = token_manager.initialize_balances().await;
     if init_count == 0 && token_manager.total_count() > 0 {
