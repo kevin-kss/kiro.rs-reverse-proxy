@@ -197,10 +197,16 @@ async fn main() {
     );
     tracing::info!("后台 Token 刷新器已启动");
 
-    // 初始化余额缓存并按余额选择初始凭据
-    let init_count = token_manager.initialize_balances().await;
-    if init_count == 0 && token_manager.total_count() > 0 {
-        tracing::warn!("所有凭据余额初始化失败，将按优先级选择凭据");
+    // 后台异步初始化余额缓存（不阻塞启动）
+    {
+        let tm = token_manager.clone();
+        tokio::spawn(async move {
+            tracing::info!("开始后台初始化凭据余额...");
+            let init_count = tm.initialize_balances().await;
+            if init_count == 0 && tm.total_count() > 0 {
+                tracing::warn!("所有凭据余额初始化失败，将按优先级选择凭据");
+            }
+        });
     }
 
     let kiro_provider = KiroProvider::with_proxy(token_manager.clone(), proxy_config.clone());
