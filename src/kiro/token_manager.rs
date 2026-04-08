@@ -2703,10 +2703,8 @@ impl MultiTokenManager {
                     }
                 }
 
-                // 持久化
-                if let Err(e) = self.persist_credentials() {
-                    tracing::warn!("Token 刷新后持久化失败: {}", e);
-                }
+                // 标记凭据需要持久化（异步写入，不阻塞后台刷新）
+                self.mark_credentials_dirty();
 
                 let expires_at = new_creds.expires_at.unwrap_or_default();
                 Ok(RefreshResult::success(id, expires_at))
