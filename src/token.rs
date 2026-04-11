@@ -102,7 +102,7 @@ pub fn count_tokens(text: &str) -> u64 {
 
     let char_units: f64 = text
         .chars()
-        .map(|c| if is_non_western_char(c) { 4.0 } else { 1.0 })
+        .map(|c| if is_non_western_char(c) { 5.5 } else { 1.0 })
         .sum();
 
     let tokens = char_units / 4.0;
@@ -116,7 +116,7 @@ pub fn count_tokens(text: &str) -> u64 {
     } else if tokens < 800.0 {
         (tokens * 1.2) as u64
     } else {
-        tokens as u64
+        (tokens * 1.15) as u64
     }
 }
 
@@ -219,6 +219,8 @@ fn count_all_tokens_local(
 
     // 用户消息
     for msg in &messages {
+        // 每条消息的结构开销（role token + 格式标记）
+        total += 4;
         if let serde_json::Value::String(s) = &msg.content {
             total += count_tokens(s);
         } else if let serde_json::Value::Array(arr) = &msg.content {
@@ -229,6 +231,9 @@ fn count_all_tokens_local(
             }
         }
     }
+
+    // 请求级别的格式开销（内部标记、分隔符等）
+    total += 50;
 
     // 工具定义
     if let Some(ref tools) = tools {
