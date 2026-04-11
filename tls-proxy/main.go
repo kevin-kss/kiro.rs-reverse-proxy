@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/base64"
 	"flag"
@@ -11,277 +10,350 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"os/signal"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	utls "github.com/refraction-networking/utls"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/proxy"
 )
 
-// nodejsSpec returns a uTLS ClientHelloSpec that exactly reproduces the
-// TLS fingerprint of Electron 39.6.0 (Kiro IDE).
+// ================================================
+// TLS Proxy - Go uTLS reverse proxy
 //
-// JA3 hash:  71dc8c533dd919ae9f4963224a4ba8fd
-// JA4:       t13d1810_5d04281c6031_78e6aca7449b
-func nodejsSpec() *utls.ClientHelloSpec {
-	return &utls.ClientHelloSpec{
-		TLSVersMax: utls.VersionTLS13,
-		TLSVersMin: utls.VersionTLS12,
-		CipherSuites: []uint16{
-			// TLS 1.3 (BoringSSL order)
-			utls.TLS_AES_128_GCM_SHA256,
-			utls.TLS_AES_256_GCM_SHA384,
-			utls.TLS_CHACHA20_POLY1305_SHA256,
-			// TLS 1.2
-			utls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256,
-			utls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256,
-			utls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384,
-			utls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384,
-			0xC027, // TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256
-			utls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305,
-			utls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305,
-			0xC009, // TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA
-			0xC013, // TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA
-			0xC00A, // TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA
-			0xC014, // TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA
-			utls.TLS_RSA_WITH_AES_128_GCM_SHA256,
-			utls.TLS_RSA_WITH_AES_256_GCM_SHA384,
-			utls.TLS_RSA_WITH_AES_128_CBC_SHA,
-			utls.TLS_RSA_WITH_AES_256_CBC_SHA,
-		},
-		Extensions: []utls.TLSExtension{
-			&utls.SNIExtension{},
-			&utls.ExtendedMasterSecretExtension{},
-			&utls.RenegotiationInfoExtension{
-				Renegotiation: utls.RenegotiateOnceAsClient,
-			},
-			&utls.SupportedCurvesExtension{
-				Curves: []utls.CurveID{
-					utls.X25519,
-					utls.CurveP256,
-					utls.CurveP384,
-				},
-			},
-			&utls.SupportedPointsExtension{
-				SupportedPoints: []byte{0},
-			},
-			&utls.SessionTicketExtension{},
-			&utls.SignatureAlgorithmsExtension{
-				SupportedSignatureAlgorithms: []utls.SignatureScheme{
-					utls.ECDSAWithP256AndSHA256,
-					utls.PSSWithSHA256,
-					utls.PKCS1WithSHA256,
-					utls.ECDSAWithP384AndSHA384,
-					utls.PSSWithSHA384,
-					utls.PKCS1WithSHA384,
-					utls.PSSWithSHA512,
-					utls.PKCS1WithSHA512,
-				},
-			},
-			&utls.KeyShareExtension{
-				KeyShares: []utls.KeyShare{{Group: utls.X25519}},
-			},
-			&utls.PSKKeyExchangeModesExtension{
-				Modes: []uint8{1},
-			},
-			&utls.SupportedVersionsExtension{
-				Versions: []uint16{utls.VersionTLS13, utls.VersionTLS12},
-			},
-		},
-	}
-}
+// 支持两种模式:
+//   1. X-Target-Host: 仅主机名，路径从请求 URL 获取
+//   2. X-Target-Url:  完整 URL（优先级更高）
+//
+// 使用 Chrome 最新指纹，ALPN 协商 h2/http1.1
+// ================================================
 
-func nodejsDialTLS(ctx context.Context, proxyURL *url.URL, addr string) (net.Conn, error) {
-	dialer := &net.Dialer{
-		Timeout:   15 * time.Second,
-		KeepAlive: 30 * time.Second,
-		DualStack: true, // 支持 IPv4/IPv6 双栈
-	}
-
-	var rawConn net.Conn
-	var err error
-
-	if proxyURL != nil {
-		rawConn, err = dialer.DialContext(ctx, "tcp", proxyURL.Host)
-		if err != nil {
-			return nil, fmt.Errorf("dial proxy: %w", err)
-		}
-
-		connectReq := &http.Request{
-			Method: "CONNECT",
-			URL:    &url.URL{Opaque: addr},
-			Host:   addr,
-			Header: make(http.Header),
-		}
-		if proxyURL.User != nil {
-			cred := proxyURL.User.String()
-			connectReq.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte(cred)))
-		}
-		if err := connectReq.Write(rawConn); err != nil {
-			rawConn.Close()
-			return nil, fmt.Errorf("write CONNECT: %w", err)
-		}
-
-		br := bufio.NewReader(rawConn)
-		resp, err := http.ReadResponse(br, connectReq)
-		if err != nil {
-			rawConn.Close()
-			return nil, fmt.Errorf("read CONNECT response: %w", err)
-		}
-		if resp.StatusCode != 200 {
-			rawConn.Close()
-			return nil, fmt.Errorf("proxy CONNECT failed: %d %s", resp.StatusCode, resp.Status)
-		}
-	} else {
-		rawConn, err = dialer.DialContext(ctx, "tcp", addr)
-		if err != nil {
-			return nil, fmt.Errorf("dial direct: %w", err)
-		}
-	}
-
-	host, _, _ := net.SplitHostPort(addr)
-	uConn := utls.UClient(rawConn, &utls.Config{ServerName: host}, utls.HelloCustom)
-	if err := uConn.ApplyPreset(nodejsSpec()); err != nil {
-		rawConn.Close()
-		return nil, fmt.Errorf("apply nodejs spec: %w", err)
-	}
-	if err := uConn.HandshakeContext(ctx); err != nil {
-		rawConn.Close()
-		return nil, fmt.Errorf("tls handshake: %w", err)
-	}
-
-	return uConn, nil
-}
-
-func createNodejsTransport(proxyURL string) *http.Transport {
-	var parsedProxy *url.URL
-	if proxyURL != "" {
-		parsedProxy, _ = url.Parse(proxyURL)
-	}
-
-	return &http.Transport{
-		DialTLSContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			return nodejsDialTLS(ctx, parsedProxy, addr)
-		},
-		DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-			dialer := &net.Dialer{
-				Timeout:   15 * time.Second,
-				KeepAlive: 30 * time.Second,
-				DualStack: true,
-			}
-			if parsedProxy != nil {
-				return dialer.DialContext(ctx, network, parsedProxy.Host)
-			}
-			return dialer.DialContext(ctx, network, addr)
-		},
-		ForceAttemptHTTP2:      false,
-		IdleConnTimeout:        90 * time.Second,
-		ResponseHeaderTimeout:  0,     // No timeout for streaming
-		ExpectContinueTimeout:  0,     // 禁用 Expect: 100-continue
-		MaxIdleConns:           1000,  // 增大空闲连接池
-		MaxIdleConnsPerHost:    200,   // 每主机保持更多空闲连接
-		MaxConnsPerHost:        0,     // 0 = 无限制，不排队
-		DisableKeepAlives:      false, // 启用 Keep-Alive
-		DisableCompression:     true,  // 禁用压缩，减少 CPU 开销
-		WriteBufferSize:        32768, // 32KB 写缓冲
-		ReadBufferSize:         32768, // 32KB 读缓冲
-	}
-}
-
-var (
-	httpClient     *http.Client
-	httpClientOnce sync.Once
-	upstreamProxy  string
+const (
+	defaultPort  = 8081
+	headerTarget = "X-Target-Url"
+	headerHost   = "X-Target-Host"
+	headerProxy  = "X-Proxy-Url"
 )
 
-func getHTTPClient() *http.Client {
-	httpClientOnce.Do(func() {
-		httpClient = &http.Client{
-			Timeout:   0, // No timeout for streaming
-			Transport: createNodejsTransport(upstreamProxy),
-		}
-	})
-	return httpClient
+// 全局 RoundTripper 缓存（按 proxyURL 分组，复用 H2 连接）
+var (
+	rtCacheMu sync.Mutex
+	rtCache   = make(map[string]*utlsRoundTripper)
+)
+
+func getOrCreateRT(proxyURL string) *utlsRoundTripper {
+	rtCacheMu.Lock()
+	defer rtCacheMu.Unlock()
+	if rt, ok := rtCache[proxyURL]; ok {
+		return rt
+	}
+	rt := newUTLSRoundTripper(proxyURL)
+	rtCache[proxyURL] = rt
+	return rt
 }
+
+// ================ uTLS RoundTripper ================
+// 根据 ALPN 协商结果自动选择 H2 或 H1 传输
+
+type utlsRoundTripper struct {
+	proxyURL string
+	mu       sync.Mutex
+	h2Conns  map[string]*http2.ClientConn // H2 连接缓存 (per host)
+}
+
+func newUTLSRoundTripper(proxyURL string) *utlsRoundTripper {
+	return &utlsRoundTripper{
+		proxyURL: proxyURL,
+		h2Conns:  make(map[string]*http2.ClientConn),
+	}
+}
+
+func (rt *utlsRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	addr := req.URL.Host
+	if !strings.Contains(addr, ":") {
+		if req.URL.Scheme == "https" {
+			addr += ":443"
+		} else {
+			addr += ":80"
+		}
+	}
+
+	// 尝试复用已有的 H2 连接
+	rt.mu.Lock()
+	if cc, ok := rt.h2Conns[addr]; ok {
+		rt.mu.Unlock()
+		if cc.CanTakeNewRequest() {
+			resp, err := cc.RoundTrip(req)
+			if err == nil {
+				return resp, nil
+			}
+			log.Printf("[TLS-PROXY] Cached H2 conn failed for %s: %v, reconnecting", addr, err)
+		}
+		rt.mu.Lock()
+		delete(rt.h2Conns, addr)
+		rt.mu.Unlock()
+	} else {
+		rt.mu.Unlock()
+	}
+
+	// 建立新的 uTLS 连接
+	conn, err := dialUTLS(req.Context(), "tcp", addr, rt.proxyURL)
+	if err != nil {
+		return nil, err
+	}
+
+	// 根据 ALPN 协商结果决定走 H2 还是 H1
+	alpn := conn.ConnectionState().NegotiatedProtocol
+	log.Printf("[TLS-PROXY] Connected to %s, ALPN: %q", addr, alpn)
+
+	if alpn == "h2" {
+		// HTTP/2: 创建 H2 ClientConn
+		t2 := &http2.Transport{
+			StrictMaxConcurrentStreams: true,
+			AllowHTTP:                  false,
+		}
+		cc, err := t2.NewClientConn(conn)
+		if err != nil {
+			conn.Close()
+			return nil, fmt.Errorf("h2 client conn: %w", err)
+		}
+
+		rt.mu.Lock()
+		rt.h2Conns[addr] = cc
+		rt.mu.Unlock()
+
+		return cc.RoundTrip(req)
+	}
+
+	// HTTP/1.1: 通过一次性 Transport 使用已建立的 TLS 连接
+	used := false
+	t1 := &http.Transport{
+		DialTLSContext: func(ctx context.Context, network, a string) (net.Conn, error) {
+			if !used {
+				used = true
+				return conn, nil
+			}
+			return dialUTLS(ctx, network, a, rt.proxyURL)
+		},
+		MaxIdleConnsPerHost: 1,
+		IdleConnTimeout:     90 * time.Second,
+	}
+
+	resp, err := t1.RoundTrip(req)
+	if err != nil {
+		conn.Close()
+	}
+	return resp, err
+}
+
+// ================ uTLS Dial ================
+
+func dialUTLS(ctx context.Context, network, addr string, proxyURL string) (*utls.UConn, error) {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+
+	// TCP 连接（可能经过代理）
+	var rawConn net.Conn
+	if proxyURL != "" {
+		rawConn, err = dialViaProxy(ctx, network, addr, proxyURL)
+	} else {
+		var d net.Dialer
+		rawConn, err = d.DialContext(ctx, network, addr)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("tcp dial failed: %w", err)
+	}
+
+	// uTLS 握手 - 使用 Chrome 最新自动指纹
+	tlsConn := utls.UClient(rawConn, &utls.Config{
+		ServerName: host,
+		NextProtos: []string{"h2", "http/1.1"},
+	}, utls.HelloChrome_Auto)
+
+	// 握手超时
+	if deadline, ok := ctx.Deadline(); ok {
+		tlsConn.SetDeadline(deadline)
+	} else {
+		tlsConn.SetDeadline(time.Now().Add(15 * time.Second))
+	}
+
+	if err := tlsConn.Handshake(); err != nil {
+		rawConn.Close()
+		return nil, fmt.Errorf("utls handshake failed: %w", err)
+	}
+
+	// 握手完成，清除超时
+	tlsConn.SetDeadline(time.Time{})
+	return tlsConn, nil
+}
+
+// ================ Proxy Dialer ================
+
+func dialViaProxy(ctx context.Context, network, addr string, proxyURL string) (net.Conn, error) {
+	parsed, err := url.Parse(proxyURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid proxy url: %w", err)
+	}
+
+	switch strings.ToLower(parsed.Scheme) {
+	case "socks5", "socks5h", "socks4", "socks":
+		var auth *proxy.Auth
+		if parsed.User != nil {
+			auth = &proxy.Auth{
+				User: parsed.User.Username(),
+			}
+			auth.Password, _ = parsed.User.Password()
+		}
+		dialer, err := proxy.SOCKS5("tcp", parsed.Host, auth, &net.Dialer{
+			Timeout: 15 * time.Second,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("socks5 dialer: %w", err)
+		}
+		if ctxDialer, ok := dialer.(proxy.ContextDialer); ok {
+			return ctxDialer.DialContext(ctx, network, addr)
+		}
+		return dialer.Dial(network, addr)
+
+	case "http", "https":
+		proxyConn, err := net.DialTimeout("tcp", parsed.Host, 15*time.Second)
+		if err != nil {
+			return nil, fmt.Errorf("connect to http proxy: %w", err)
+		}
+
+		connectReq := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n", addr, addr)
+		if parsed.User != nil {
+			username := parsed.User.Username()
+			password, _ := parsed.User.Password()
+			cred := base64.StdEncoding.EncodeToString([]byte(username + ":" + password))
+			connectReq += fmt.Sprintf("Proxy-Authorization: Basic %s\r\n", cred)
+		}
+		connectReq += "\r\n"
+
+		if _, err = proxyConn.Write([]byte(connectReq)); err != nil {
+			proxyConn.Close()
+			return nil, fmt.Errorf("proxy CONNECT write: %w", err)
+		}
+
+		buf := make([]byte, 4096)
+		n, err := proxyConn.Read(buf)
+		if err != nil {
+			proxyConn.Close()
+			return nil, fmt.Errorf("proxy CONNECT read: %w", err)
+		}
+		if !strings.Contains(string(buf[:n]), "200") {
+			proxyConn.Close()
+			return nil, fmt.Errorf("proxy CONNECT rejected: %s", strings.TrimSpace(string(buf[:n])))
+		}
+
+		return proxyConn, nil
+
+	default:
+		return nil, fmt.Errorf("unsupported proxy scheme: %s", parsed.Scheme)
+	}
+}
+
+// ================ HTTP Handler ================
 
 func proxyHandler(w http.ResponseWriter, r *http.Request) {
-	// Build upstream URL
-	targetHost := r.Header.Get("X-Target-Host")
-	if targetHost == "" {
-		targetHost = "q.us-east-1.amazonaws.com"
-	}
-	log.Printf("[TLS-PROXY] %s %s -> %s", r.Method, r.URL.Path, targetHost)
-	targetURL := "https://" + targetHost + r.URL.Path
-	if r.URL.RawQuery != "" {
-		targetURL += "?" + r.URL.RawQuery
+	// 优先使用 X-Target-Url，其次使用 X-Target-Host
+	targetURL := r.Header.Get(headerTarget)
+	proxyURL := r.Header.Get(headerProxy)
+
+	if targetURL == "" {
+		// 兼容旧模式: X-Target-Host
+		targetHost := r.Header.Get(headerHost)
+		if targetHost == "" {
+			targetHost = "q.us-east-1.amazonaws.com"
+		}
+		targetURL = "https://" + targetHost + r.URL.Path
+		if r.URL.RawQuery != "" {
+			targetURL += "?" + r.URL.RawQuery
+		}
 	}
 
-	// Create upstream request
-	ctx := r.Context()
-	upstreamReq, err := http.NewRequestWithContext(ctx, r.Method, targetURL, r.Body)
+	parsed, err := url.Parse(targetURL)
 	if err != nil {
-		http.Error(w, fmt.Sprintf("create request: %v", err), http.StatusInternalServerError)
+		http.Error(w, fmt.Sprintf(`{"error":"invalid target url: %s"}`, err), http.StatusBadRequest)
 		return
 	}
 
-	// Copy headers (except hop-by-hop)
-	hopHeaders := map[string]bool{
-		"Connection":          true,
-		"Keep-Alive":          true,
-		"Proxy-Authenticate":  true,
-		"Proxy-Authorization": true,
-		"Te":                  true,
-		"Trailers":            true,
-		"Transfer-Encoding":   true,
-		"Upgrade":             true,
-		"X-Target-Host":       true,
+	log.Printf("[TLS-PROXY] %s %s -> %s", r.Method, r.URL.Path, parsed.Host)
+
+	// Create upstream request
+	outReq, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL, r.Body)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":"failed to create request: %s"}`, err), http.StatusInternalServerError)
+		return
 	}
-	for k, vv := range r.Header {
-		if hopHeaders[k] {
+
+	// Copy headers (skip internal + hop-by-hop)
+	// 彻底清理所有非浏览器标头，严格保持小写
+	for key, vals := range r.Header {
+		lk := strings.ToLower(key)
+		if lk == strings.ToLower(headerTarget) || lk == strings.ToLower(headerHost) || lk == strings.ToLower(headerProxy) {
 			continue
 		}
-		for _, v := range vv {
-			upstreamReq.Header.Add(k, v)
+		// 移除所有代理、本地网络特征标头，防止 Cloudflare 识别
+		if lk == "connection" || lk == "keep-alive" || lk == "transfer-encoding" ||
+			lk == "te" || lk == "trailer" || lk == "upgrade" || lk == "host" ||
+			lk == "x-forwarded-for" || lk == "x-real-ip" || lk == "x-forwarded-proto" ||
+			lk == "x-forwarded-host" || lk == "via" || lk == "proxy-connection" ||
+			lk == "cf-connecting-ip" || lk == "true-client-ip" {
+			continue
 		}
+		outReq.Header[key] = vals
+	}
+	outReq.Host = parsed.Host
+
+	// 强制设置标准的 Accept-Encoding
+	if ae := outReq.Header["Accept-Encoding"]; len(ae) > 0 {
+		outReq.Header["Accept-Encoding"] = []string{"gzip, deflate, br, zstd"}
 	}
 
-	// Override Host header
-	upstreamReq.Host = targetHost
-
-	// Send request
-	client := getHTTPClient()
-	resp, err := client.Do(upstreamReq)
+	// Execute via uTLS RoundTripper
+	rt := getOrCreateRT(proxyURL)
+	resp, err := rt.RoundTrip(outReq)
 	if err != nil {
-		log.Printf("upstream request failed: %v", err)
-		http.Error(w, fmt.Sprintf("upstream error: %v", err), http.StatusBadGateway)
+		log.Printf("[TLS-PROXY] RoundTrip error -> %s: %v", parsed.Host, err)
+		http.Error(w, fmt.Sprintf(`{"error":"upstream request failed: %s"}`, err), http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()
 
 	// Copy response headers
-	for k, vv := range resp.Header {
-		for _, v := range vv {
-			w.Header().Add(k, v)
+	for key, vals := range resp.Header {
+		for _, v := range vals {
+			w.Header().Add(key, v)
 		}
 	}
 	w.WriteHeader(resp.StatusCode)
 
-	// Stream response body with immediate flush for SSE
+	// Stream body (SSE-friendly: flush after every read)
 	flusher, canFlush := w.(http.Flusher)
-	buf := make([]byte, 4096) // 使用更大的缓冲区提高吞吐量
+	buf := make([]byte, 32*1024)
 	for {
-		n, err := resp.Body.Read(buf)
+		n, readErr := resp.Body.Read(buf)
 		if n > 0 {
-			w.Write(buf[:n])
-			// Flush after each read for SSE real-time streaming
+			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+				log.Printf("[TLS-PROXY] Write error: %v", writeErr)
+				return
+			}
 			if canFlush {
 				flusher.Flush()
 			}
 		}
-		if err != nil {
-			if err != io.EOF {
-				log.Printf("read upstream body: %v", err)
+		if readErr != nil {
+			if readErr != io.EOF {
+				log.Printf("[TLS-PROXY] Read error: %v", readErr)
 			}
-			break
+			return
 		}
 	}
 }
@@ -292,31 +364,43 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func main() {
-	port := flag.Int("port", 8081, "Listen port")
-	proxy := flag.String("proxy", "", "Upstream proxy URL (optional)")
+	port := flag.Int("port", defaultPort, "Listen port")
+	upstreamProxy := flag.String("proxy", "", "Upstream proxy URL (optional)")
 	flag.Parse()
 
-	upstreamProxy = *proxy
+	// 预创建默认 RoundTripper
+	getOrCreateRT(*upstreamProxy)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/", proxyHandler)
 
 	addr := fmt.Sprintf("127.0.0.1:%d", *port)
-	log.Printf("TLS proxy listening on %s (Electron fingerprint)", addr)
-	if upstreamProxy != "" {
-		log.Printf("Using upstream proxy: %s", upstreamProxy)
+	log.Printf("[TLS-PROXY] Listening on %s (Chrome fingerprint, H2 enabled)", addr)
+	if *upstreamProxy != "" {
+		log.Printf("[TLS-PROXY] Using upstream proxy: %s", *upstreamProxy)
 	}
 
 	server := &http.Server{
 		Addr:         addr,
 		Handler:      mux,
-		ReadTimeout:  0,
-		WriteTimeout: 0,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 0, // SSE 流式响应不设写超时
 		IdleTimeout:  120 * time.Second,
 	}
 
-	if err := server.ListenAndServe(); err != nil {
-		log.Fatalf("server error: %v", err)
+	// 优雅关闭
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		<-sigCh
+		log.Println("[TLS-PROXY] Shutting down...")
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		server.Shutdown(ctx)
+	}()
+
+	if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		log.Fatalf("[TLS-PROXY] Server error: %v", err)
 	}
 }

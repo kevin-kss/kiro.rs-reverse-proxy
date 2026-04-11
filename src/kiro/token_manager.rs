@@ -232,8 +232,13 @@ async fn refresh_social_token(
         .filter(|r| !r.trim().is_empty())
         .unwrap_or(&config.region);
 
-    let refresh_url = format!("https://prod.{}.auth.desktop.kiro.dev/refreshToken", region);
     let refresh_domain = format!("prod.{}.auth.desktop.kiro.dev", region);
+    // 如果配置了 TLS 代理，通过代理发送请求
+    let refresh_url = if let Some(ref tls_proxy) = config.tls_proxy_url {
+        format!("{}/refreshToken", tls_proxy.trim_end_matches('/'))
+    } else {
+        format!("https://{}/refreshToken", refresh_domain)
+    };
     let machine_id = machine_id::generate_from_credentials(credentials, config)
         .ok_or_else(|| anyhow::anyhow!("无法生成 machineId"))?;
     let kiro_version = &config.kiro_version;
@@ -243,7 +248,7 @@ async fn refresh_social_token(
         refresh_token: refresh_token.to_string(),
     };
 
-    let response = client
+    let mut request = client
         .post(&refresh_url)
         .header("Accept", "application/json, text/plain, */*")
         .header("Content-Type", "application/json")
@@ -253,7 +258,14 @@ async fn refresh_social_token(
         )
         .header("Accept-Encoding", "gzip, compress, deflate, br")
         .header("host", &refresh_domain)
-        .header("Connection", "close")
+        .header("Connection", "close");
+    
+    // 如果使用 TLS 代理，添加 X-Target-Host 头
+    if config.tls_proxy_url.is_some() {
+        request = request.header("X-Target-Host", &refresh_domain);
+    }
+    
+    let response = request
         .json(&body)
         .send()
         .await?;
@@ -322,7 +334,13 @@ async fn refresh_idc_token(
         .as_ref()
         .filter(|r| !r.trim().is_empty())
         .unwrap_or(&config.region);
-    let refresh_url = format!("https://oidc.{}.amazonaws.com/token", region);
+    let idc_domain = format!("oidc.{}.amazonaws.com", region);
+    // 如果配置了 TLS 代理，通过代理发送请求
+    let refresh_url = if let Some(ref tls_proxy) = config.tls_proxy_url {
+        format!("{}/token", tls_proxy.trim_end_matches('/'))
+    } else {
+        format!("https://{}/token", idc_domain)
+    };
 
     let client = build_client(proxy, 60, config.tls_backend)?;
     let body = IdcRefreshRequest {
@@ -332,17 +350,24 @@ async fn refresh_idc_token(
         grant_type: "refresh_token".to_string(),
     };
 
-    let response = client
+    let mut request = client
         .post(&refresh_url)
         .header("Content-Type", "application/json")
-        .header("Host", format!("oidc.{}.amazonaws.com", region))
+        .header("Host", &idc_domain)
         .header("Connection", "keep-alive")
         .header("x-amz-user-agent", IDC_AMZ_USER_AGENT)
         .header("Accept", "*/*")
         .header("Accept-Language", "*")
         .header("sec-fetch-mode", "cors")
         .header("User-Agent", "node")
-        .header("Accept-Encoding", "br, gzip, deflate")
+        .header("Accept-Encoding", "br, gzip, deflate");
+    
+    // 如果使用 TLS 代理，添加 X-Target-Host 头
+    if config.tls_proxy_url.is_some() {
+        request = request.header("X-Target-Host", &idc_domain);
+    }
+    
+    let response = request
         .json(&body)
         .send()
         .await?;
@@ -403,16 +428,19 @@ pub(crate) async fn get_usage_limits(
         .ok_or_else(|| anyhow::anyhow!("无法生成 machineId"))?;
     let kiro_version = &config.kiro_version;
 
-    // 构建 URL（isEmailRequired=true 让 API 返回邮箱信息）
-    let mut url = format!(
-        "https://{}/getUsageLimits?isEmailRequired=true&origin=AI_EDITOR&resourceType=AGENTIC_REQUEST",
-        host
-    );
-
+    // 构建查询参数
+    let mut query = "isEmailRequired=true&origin=AI_EDITOR&resourceType=AGENTIC_REQUEST".to_string();
     // profileArn 是可选的
     if let Some(profile_arn) = &credentials.profile_arn {
-        url.push_str(&format!("&profileArn={}", urlencoding::encode(profile_arn)));
+        query.push_str(&format!("&profileArn={}", urlencoding::encode(profile_arn)));
     }
+
+    // 如果配置了 TLS 代理，通过代理发送请求
+    let url = if let Some(ref tls_proxy) = config.tls_proxy_url {
+        format!("{}/getUsageLimits?{}", tls_proxy.trim_end_matches('/'), query)
+    } else {
+        format!("https://{}/getUsageLimits?{}", host, query)
+    };
 
     // 构建 User-Agent headers
     let user_agent = format!(
@@ -427,7 +455,7 @@ pub(crate) async fn get_usage_limits(
 
     let client = build_client(proxy, 60, config.tls_backend)?;
 
-    let response = client
+    let mut request = client
         .get(&url)
         .header("x-amz-user-agent", &amz_user_agent)
         .header("User-Agent", &user_agent)
@@ -435,7 +463,14 @@ pub(crate) async fn get_usage_limits(
         .header("amz-sdk-invocation-id", uuid::Uuid::new_v4().to_string())
         .header("amz-sdk-request", "attempt=1; max=1")
         .header("Authorization", format!("Bearer {}", token))
-        .header("Connection", "close")
+        .header("Connection", "close");
+    
+    // 如果使用 TLS 代理，添加 X-Target-Host 头
+    if config.tls_proxy_url.is_some() {
+        request = request.header("X-Target-Host", &host);
+    }
+    
+    let response = request
         .send()
         .await?;
 
