@@ -16,7 +16,7 @@ COPY admin-ui ./
 RUN pnpm build
 
 # Go TLS 指纹代理构建阶段
-FROM golang:1.21-alpine AS tls-proxy-builder
+FROM golang:1.22-alpine AS tls-proxy-builder
 WORKDIR /app/tls-proxy
 COPY tls-proxy/go.mod tls-proxy/go.sum ./
 RUN go mod download
