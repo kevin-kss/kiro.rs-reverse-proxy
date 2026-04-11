@@ -102,21 +102,21 @@ pub fn count_tokens(text: &str) -> u64 {
 
     let char_units: f64 = text
         .chars()
-        .map(|c| if is_non_western_char(c) { 5.5 } else { 1.0 })
+        .map(|c| if is_non_western_char(c) { 6.5 } else { 1.0 })
         .sum();
 
     let tokens = char_units / 4.0;
 
     if tokens < 100.0 {
-        (tokens * 1.5) as u64
+        (tokens * 1.7) as u64
     } else if tokens < 200.0 {
-        (tokens * 1.3) as u64
+        (tokens * 1.5) as u64
     } else if tokens < 300.0 {
-        (tokens * 1.25) as u64
+        (tokens * 1.45) as u64
     } else if tokens < 800.0 {
-        (tokens * 1.2) as u64
+        (tokens * 1.4) as u64
     } else {
-        (tokens * 1.15) as u64
+        (tokens * 1.35) as u64
     }
 }
 
