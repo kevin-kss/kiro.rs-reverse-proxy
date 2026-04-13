@@ -1219,7 +1219,10 @@ async fn handle_non_stream_request(
                             let actual_input_tokens =
                                 (context_usage.context_usage_percentage * context_window / 100.0)
                                     as i32;
-                            context_input_tokens = Some(actual_input_tokens);
+                            // 取本地估算和上游值的较小者（上游包含 Kiro 内部开销，小请求会虚高）
+                            if actual_input_tokens < input_tokens {
+                                context_input_tokens = Some(actual_input_tokens);
+                            }
                             // 上下文使用量达到 100% 时，设置 stop_reason 为 model_context_window_exceeded
                             if context_usage.context_usage_percentage >= 100.0 {
                                 stop_reason = "model_context_window_exceeded".to_string();

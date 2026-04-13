@@ -230,7 +230,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
     let successCount = 0
     let failCount = 0
 
-    for (const id of disabledIds) {
+    await Promise.all(disabledIds.map(async (id) => {
       try {
         await new Promise<void>((resolve, reject) => {
           deleteCredential(id, {
@@ -247,7 +247,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
       } catch (error) {
         // 错误已在 onError 中处理
       }
-    }
+    }))
 
     const skippedResultText = skippedCount > 0 ? `，已跳过 ${skippedCount} 个未禁用凭据` : ''
 
@@ -280,7 +280,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
     let successCount = 0
     let failCount = 0
 
-    for (const id of failedIds) {
+    await Promise.all(failedIds.map(async (id) => {
       try {
         await new Promise<void>((resolve, reject) => {
           resetFailure(id, {
@@ -297,7 +297,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
       } catch (error) {
         // 错误已在 onError 中处理
       }
-    }
+    }))
 
     if (failCount === 0) {
       toast.success(`成功恢复 ${successCount} 个凭据`)
@@ -332,14 +332,14 @@ export function Dashboard({ onLogout }: DashboardProps) {
     let successCount = 0
     let failCount = 0
 
-    for (const id of enabledIds) {
+    await Promise.all(enabledIds.map(async (id) => {
       try {
         await setDisabled({ id, disabled: true })
         successCount++
       } catch {
         failCount++
       }
-    }
+    }))
 
     if (failCount === 0) {
       toast.success(`成功禁用 ${successCount} 个凭据`)
@@ -370,14 +370,14 @@ export function Dashboard({ onLogout }: DashboardProps) {
     let successCount = 0
     let failCount = 0
 
-    for (const id of disabledIds) {
+    await Promise.all(disabledIds.map(async (id) => {
       try {
         await setDisabled({ id, disabled: false })
         successCount++
       } catch {
         failCount++
       }
-    }
+    }))
 
     if (failCount === 0) {
       toast.success(`成功启用 ${successCount} 个凭据`)
@@ -409,7 +409,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
     let successCount = 0
     let failCount = 0
 
-    for (const credential of disabledCredentials) {
+    await Promise.all(disabledCredentials.map(async (credential) => {
       try {
         await new Promise<void>((resolve, reject) => {
           deleteCredential(credential.id, {
@@ -426,7 +426,7 @@ export function Dashboard({ onLogout }: DashboardProps) {
       } catch (error) {
         // 错误已在 onError 中处理
       }
-    }
+    }))
 
     if (failCount === 0) {
       toast.success(`成功清除所有 ${successCount} 个已禁用凭据`)
