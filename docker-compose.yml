@@ -1,7 +1,7 @@
 services:
   kiro-rs:
-    # build: .
-    image: ghcr.io/kevin-kss/kiro.rs-reverse-proxy:latest
+    build: .
+    # image: ghcr.io/kevin-kss/kiro.rs-reverse-proxy:latest
     container_name: kiro-rs
     extra_hosts:
       - "host.docker.internal:host-gateway"
