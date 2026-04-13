@@ -1,8 +1,7 @@
 services:
   kiro-rs:
-    build: .
-    # 或拉取预构建镜像（二选一）：
-    # image: ghcr.io/${IMAGE_OWNER:-hank9999}/kiro-rs:${IMAGE_TAG:-latest}
+    # build: .
+    image: ghcr.io/kevin-kss/kiro.rs-reverse-proxy:latest
     container_name: kiro-rs
     extra_hosts:
       - "host.docker.internal:host-gateway"
