@@ -240,7 +240,7 @@ impl KiroProvider {
             AUTHORIZATION,
             HeaderValue::from_str(&format!("Bearer {}", ctx.token))?,
         );
-        headers.insert(CONNECTION, HeaderValue::from_static("close"));
+        headers.insert(CONNECTION, HeaderValue::from_static("keep-alive"));
 
         Ok(headers)
     }
@@ -296,7 +296,7 @@ impl KiroProvider {
             "Authorization",
             HeaderValue::from_str(&format!("Bearer {}", ctx.token))?,
         );
-        headers.insert("Connection", HeaderValue::from_static("close"));
+        headers.insert("Connection", HeaderValue::from_static("keep-alive"));
 
         Ok(headers)
     }

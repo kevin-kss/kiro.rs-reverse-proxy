@@ -258,7 +258,7 @@ async fn refresh_social_token(
         )
         .header("Accept-Encoding", "gzip, compress, deflate, br")
         .header("host", &refresh_domain)
-        .header("Connection", "close");
+        .header("Connection", "keep-alive");
     
     // 如果使用 TLS 代理，添加 X-Target-Host 头
     if config.tls_proxy_url.is_some() {
@@ -463,7 +463,7 @@ pub(crate) async fn get_usage_limits(
         .header("amz-sdk-invocation-id", uuid::Uuid::new_v4().to_string())
         .header("amz-sdk-request", "attempt=1; max=1")
         .header("Authorization", format!("Bearer {}", token))
-        .header("Connection", "close");
+        .header("Connection", "keep-alive");
     
     // 如果使用 TLS 代理，添加 X-Target-Host 头
     if config.tls_proxy_url.is_some() {
